@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AdmissionApplication } from '../types';
 import {
   GoogleSheetsConfig,
   getGoogleSheetsConfig,
   saveGoogleSheetsConfig,
+  fetchServerSheetsConfig,
   sendApplicationToGoogleSheets,
   testGoogleSheetsWebhook,
   GOOGLE_APPS_SCRIPT_CODE,
@@ -38,6 +39,18 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   const [webhookUrl, setWebhookUrl] = useState<string>(config.webhookUrl);
   const [sheetUrl, setSheetUrl] = useState<string>(config.sheetUrl);
   const [autoSync, setAutoSync] = useState<boolean>(config.autoSync);
+
+  // Fetch centralized config from server on mount
+  useEffect(() => {
+    fetchServerSheetsConfig().then((serverCfg) => {
+      if (serverCfg && serverCfg.webhookUrl) {
+        setConfig(serverCfg);
+        setWebhookUrl(serverCfg.webhookUrl);
+        setSheetUrl(serverCfg.sheetUrl || '');
+        setAutoSync(serverCfg.autoSync !== false);
+      }
+    });
+  }, []);
 
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);

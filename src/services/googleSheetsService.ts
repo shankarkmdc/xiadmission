@@ -10,12 +10,22 @@ const STORAGE_KEYS = {
   SHEETS_CONFIG: 'kmdc_google_sheets_config_v1',
 };
 
-// Default setup
+// In-memory cache for fast access
+let inMemoryConfig: GoogleSheetsConfig | null = null;
+
+/**
+ * Get config from memory / localStorage (synchronous)
+ */
 export function getGoogleSheetsConfig(): GoogleSheetsConfig {
+  if (inMemoryConfig) {
+    return inMemoryConfig;
+  }
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SHEETS_CONFIG);
     if (data) {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      inMemoryConfig = parsed;
+      return parsed;
     }
   } catch (err) {
     console.error('Failed to parse Google Sheets config:', err);
@@ -27,29 +37,59 @@ export function getGoogleSheetsConfig(): GoogleSheetsConfig {
   };
 }
 
-export function saveGoogleSheetsConfig(config: GoogleSheetsConfig): void {
-  localStorage.setItem(STORAGE_KEYS.SHEETS_CONFIG, JSON.stringify(config));
+/**
+ * Fetch centralized server config so ANY student device immediately has the Webhook URL
+ */
+export async function fetchServerSheetsConfig(): Promise<GoogleSheetsConfig> {
+  try {
+    const res = await fetch('/api/sheets-config');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.config && json.config.webhookUrl) {
+        saveGoogleSheetsConfig(json.config, false);
+        inMemoryConfig = json.config;
+        return json.config;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not fetch server sheets config, using local cache:', err);
+  }
+  return getGoogleSheetsConfig();
+}
+
+/**
+ * Save config both to localStorage and central server
+ */
+export async function saveGoogleSheetsConfig(config: GoogleSheetsConfig, syncToServer: boolean = true): Promise<void> {
+  inMemoryConfig = config;
+  try {
+    localStorage.setItem(STORAGE_KEYS.SHEETS_CONFIG, JSON.stringify(config));
+  } catch (err) {
+    console.error('Failed to save to localStorage:', err);
+  }
+
+  if (syncToServer) {
+    try {
+      await fetch('/api/sheets-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+    } catch (err) {
+      console.error('Failed to save config to server:', err);
+    }
+  }
+}
+
+// Automatically fetch on startup
+if (typeof window !== 'undefined') {
+  fetchServerSheetsConfig().catch(() => {});
 }
 
 /**
  * Pre-formatted Google Apps Script code to paste into Google Sheet Script Editor.
- * Includes automatic column headers initialization, row appending, and duplicate prevention.
  */
-export const GOOGLE_APPS_SCRIPT_CODE = `/**
- * কসবা মহিলা ডিগ্রি কলেজ - একাদশ শ্রেণি অনলাইন ভর্তি ২০২৬-২০২৭
- * Google Apps Script Web App for Live Sheet Sync
- * 
- * প্রস্তুতপ্রণালী:
- * ১. আপনার Google Sheet-এ গিয়ে Extensions > Apps Script-এ যান।
- * ২. বিদ্যমান কোড মুছে এই সম্পূর্ণ কোডটি পেস্ট করুন।
- * ৩. Deploy > New deployment > Web app নির্বাচন করুন:
- *    - Description: KMDC Admission Sync
- *    - Execute as: Me (আপনার জিমেইল)
- *    - Who has access: Anyone (যাতে শিক্ষার্থীরা সাবমিট করতে পারে)
- * ৪. 'Deploy' বাটনে ক্লিক করে полученный Web app URL কপি করে KMDC এডমিন পোর্টালে পেস্ট করুন।
- */
-
-function setupHeadersIfEmpty(sheet) {
+export const GOOGLE_APPS_SCRIPT_CODE = `function setupHeadersIfEmpty(sheet) {
   if (sheet.getLastRow() === 0) {
     var headers = [
       "ক্রমিক",
@@ -85,7 +125,6 @@ function setupHeadersIfEmpty(sheet) {
     
     sheet.appendRow(headers);
     
-    // Header formatting
     var headerRange = sheet.getRange(1, 1, 1, headers.length);
     headerRange.setBackground("#047857");
     headerRange.setFontColor("#ffffff");
@@ -98,7 +137,7 @@ function setupHeadersIfEmpty(sheet) {
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
-    lock.waitLock(30000); // Wait up to 30 seconds to prevent concurrent overwrite
+    lock.waitLock(30000);
     
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = spreadsheet.getActiveSheet();
@@ -107,7 +146,6 @@ function doPost(e) {
     
     var data = JSON.parse(e.postData.contents);
     
-    // Check if this is a test ping
     if (data.action === 'TEST_PING') {
       return ContentService.createTextOutput(JSON.stringify({
         status: 'success',
@@ -118,7 +156,6 @@ function doPost(e) {
     var sscRoll = String(data.sscRoll || '').trim();
     var trackingId = String(data.trackingId || '').trim();
     
-    // Check for existing record by SSC Roll (Column 7) to update or append
     var dataRange = sheet.getDataRange();
     var values = dataRange.getValues();
     var rowIndexToUpdate = -1;
@@ -126,7 +163,7 @@ function doPost(e) {
     for (var i = 1; i < values.length; i++) {
       var rowRoll = String(values[i][6]).trim();
       if (rowRoll && rowRoll === sscRoll) {
-        rowIndexToUpdate = i + 1; // 1-indexed
+        rowIndexToUpdate = i + 1;
         break;
       }
     }
@@ -190,23 +227,52 @@ function doPost(e) {
 
 function doGet(e) {
   return ContentService.createTextOutput("KMDC Online Admission Google Sheets Webhook is active and running!");
-}
-`;
+}`;
 
 /**
- * Sends single application to Google Sheets webhook
+ * Sends single application to Google Sheets webhook via robust Server Proxy (or direct fallback)
  */
 export async function sendApplicationToGoogleSheets(
   app: AdmissionApplication,
   webhookUrlOverride?: string
 ): Promise<{ success: boolean; message: string }> {
-  const config = getGoogleSheetsConfig();
+  let config = getGoogleSheetsConfig();
+  if (!config.webhookUrl) {
+    config = await fetchServerSheetsConfig();
+  }
+
   const targetUrl = (webhookUrlOverride || config.webhookUrl || '').trim();
 
+  // 1. First attempt: Use central server proxy (/api/sync-to-sheet)
+  // This completely bypasses browser CORS restrictions and works from mobile phones, tablets, etc.!
+  try {
+    const serverRes = await fetch('/api/sync-to-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        application: app,
+        webhookUrlOverride: targetUrl || undefined,
+      }),
+    });
+
+    if (serverRes.ok) {
+      const json = await serverRes.json();
+      if (json.success) {
+        return {
+          success: true,
+          message: 'গুগল শিটে লাইভ ডেটা পাঠানো হয়েছে!',
+        };
+      }
+    }
+  } catch (serverErr) {
+    console.warn('Server sync endpoint error, attempting client fallback:', serverErr);
+  }
+
+  // 2. Fallback: Direct browser fetch if server is unreachable
   if (!targetUrl) {
     return {
       success: false,
-      message: 'গুগল শিট Webhook URL সেট করা হয়নি। অনুগ্রহ করে এডমিন পোর্টাল থেকে URL সেট করুন।',
+      message: 'গুগল শিট Webhook URL সেট করা হয়নি। এডমিন প্যানেল থেকে Webhook URL সেট করুন।',
     };
   }
 
@@ -245,14 +311,13 @@ export async function sendApplicationToGoogleSheets(
   };
 
   try {
-    // Send with text/plain content-type to avoid CORS preflight options check in browsers for Google Apps Script
     await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(payload),
-      mode: 'no-cors', // Apps Script redirects; mode no-cors handles Google redirect gracefully
+      mode: 'no-cors',
     });
 
     return {
@@ -280,6 +345,28 @@ export async function testGoogleSheetsWebhook(
     return { success: false, message: 'অনুগ্রহ করে Webhook URL ইনপুট দিন।' };
   }
 
+  // 1. Try server test route
+  try {
+    const serverRes = await fetch('/api/test-sheets-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhookUrl: trimmed }),
+    });
+
+    if (serverRes.ok) {
+      const json = await serverRes.json();
+      if (json.success) {
+        return {
+          success: true,
+          message: 'সংযোগ টেস্ট সফল হয়েছে! গুগল শিটে টেস্ট সিগন্যাল পৌঁছেছে।',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Server test failed, trying direct:', err);
+  }
+
+  // 2. Direct fallback
   try {
     const testPayload = {
       action: 'TEST_PING',

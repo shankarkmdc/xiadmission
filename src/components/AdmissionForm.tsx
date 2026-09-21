@@ -183,18 +183,15 @@ export const AdmissionForm: React.FC<AdmissionFormProps> = ({
         editPermissionGiven: false,
       };
 
-      // Live sync to Google Sheets if configured
-      const sheetsConfig = getGoogleSheetsConfig();
-      if (sheetsConfig.webhookUrl && sheetsConfig.autoSync) {
-        try {
-          const syncResult = await sendApplicationToGoogleSheets(applicationData);
-          if (syncResult.success) {
-            applicationData.syncedToGoogleSheets = true;
-            applicationData.lastSyncedAt = new Date().toISOString();
-          }
-        } catch (syncErr) {
-          console.warn('Google Sheets live sync background notice:', syncErr);
+      // Live sync to Google Sheets (centralized server sync)
+      try {
+        const syncResult = await sendApplicationToGoogleSheets(applicationData);
+        if (syncResult.success) {
+          applicationData.syncedToGoogleSheets = true;
+          applicationData.lastSyncedAt = new Date().toISOString();
         }
+      } catch (syncErr) {
+        console.warn('Google Sheets live sync notice:', syncErr);
       }
 
       // Save to storage
