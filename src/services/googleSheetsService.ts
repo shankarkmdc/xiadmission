@@ -89,11 +89,12 @@ if (typeof window !== 'undefined') {
 /**
  * Pre-formatted Google Apps Script code to paste into Google Sheet Script Editor.
  * Includes:
- * 1. Automatic Column Headers initialization
+ * 1. Automatic Column Headers initialization (and automatic migration for existing sheets)
  * 2. Student Passport Photo upload to Google Drive folder ('KMDC_Admission_Student_Photos_2026')
  * 3. Direct IMAGE() formula thumbnail inside Google Sheet cell
  * 4. Clickable direct view link for the student's photo
  * 5. Automatic Row Appending / Updating without duplicates by SSC Roll
+ * 6. Detailed error logging in return JSON
  */
 export const GOOGLE_APPS_SCRIPT_CODE = `function getOrCreatePhotoFolder() {
   var folderName = "KMDC_Admission_Student_Photos_2026";
@@ -105,89 +106,108 @@ export const GOOGLE_APPS_SCRIPT_CODE = `function getOrCreatePhotoFolder() {
 }
 
 function savePhotoToDrive(base64Data, filename) {
+  var debugLog = [];
   try {
-    if (!base64Data || !base64Data.includes("base64,")) {
-      return { url: "", directUrl: "" };
+    if (!base64Data || typeof base64Data !== 'string') {
+      return { url: "", directUrl: "", error: "No base64 string provided" };
     }
-    var parts = base64Data.split("base64,");
-    var contentType = parts[0].split(";")[0].replace("data:", "") || "image/jpeg";
-    var decoded = Utilities.base64Decode(parts[1]);
+    
+    // Clean base64 data
+    var rawBase64 = base64Data;
+    var contentType = "image/jpeg";
+    if (base64Data.indexOf("base64,") !== -1) {
+      var parts = base64Data.split("base64,");
+      contentType = parts[0].split(";")[0].replace("data:", "") || "image/jpeg";
+      rawBase64 = parts[1];
+    }
+    
+    var decoded = Utilities.base64Decode(rawBase64);
     var blob = Utilities.newBlob(decoded, contentType, filename);
     
     var folder = getOrCreatePhotoFolder();
     
-    // Check if an existing file with this name exists in folder
+    // Remove duplicate file with same name if any
     var existingFiles = folder.getFilesByName(filename);
     while (existingFiles.hasNext()) {
       existingFiles.next().setTrashed(true);
     }
     
     var file = folder.createFile(blob);
-    // Allow anyone with link to view the image thumbnail in sheets
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    // Set view access so thumbnail and direct link work
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch(shareErr) {
+      Logger.log("Sharing error (non-fatal): " + shareErr);
+    }
     
     var fileId = file.getId();
     var viewUrl = file.getUrl();
-    // Direct thumbnail URL for IMAGE() formula
+    // Direct thumbnail URL for IMAGE() formula in Google Sheets
     var directUrl = "https://lh3.googleusercontent.com/d/" + fileId;
     
-    return { url: viewUrl, directUrl: directUrl };
+    return { url: viewUrl, directUrl: directUrl, fileId: fileId, folderId: folder.getId() };
   } catch (e) {
-    Logger.log("Error saving photo: " + e.toString());
-    return { url: "", directUrl: "" };
+    Logger.log("Error saving photo to Drive: " + e.toString());
+    return { url: "", directUrl: "", error: e.toString() };
   }
 }
 
-function setupHeadersIfEmpty(sheet) {
+function ensureCorrectHeaders(sheet) {
+  var standardHeaders = [
+    "ক্রমিক",
+    "শিক্ষার্থীর ছবি (Photo)",
+    "ছবির ড্রাইভ লিংক (Drive URL)",
+    "ট্র্যাকিং আইডি",
+    "শ্রেণি রোল (বরাদ্দকৃত)",
+    "ভর্তির স্ট্যাটাস",
+    "বিভাগ (Group)",
+    "শিক্ষাবর্ষ",
+    "এসএসসি রোল",
+    "রেজিস্ট্রেশন নম্বর",
+    "শিক্ষা বোর্ড",
+    "পাসের সন",
+    "প্রাপ্ত GPA",
+    "শিক্ষার্থীর নাম (বাংলা)",
+    "শিক্ষার্থীর নাম (English)",
+    "শিক্ষার্থীর মোবাইল",
+    "পিতার নাম (বাংলা)",
+    "পিতার নাম (English)",
+    "পিতার মোবাইল",
+    "মাতার নাম (বাংলা)",
+    "মাতার নাম (English)",
+    "মাতার মোবাইল",
+    "বর্তমান ঠিকানা",
+    "স্থায়ী ঠিকানা",
+    "বাধ্যতামূলক বিষয়",
+    "৪র্থ বিষয় (Elective 4)",
+    "৫ম বিষয় (Elective 5)",
+    "৬ষ্ঠ বিষয় (Elective 6)",
+    "৭ম বিষয় (ঐচ্ছিক)",
+    "আবেদন দাখিলের সময়",
+    "সিঙ্ক সময়"
+  ];
+  
   if (sheet.getLastRow() === 0) {
-    var headers = [
-      "ক্রমিক",
-      "শিক্ষার্থীর ছবি (Photo)",
-      "ছবির ড্রাইভ লিংক (Drive URL)",
-      "ট্র্যাকিং আইডি",
-      "শ্রেণি রোল (বরাদ্দকৃত)",
-      "ভর্তির স্ট্যাটাস",
-      "বিভাগ (Group)",
-      "শিক্ষাবর্ষ",
-      "এসএসসি রোল",
-      "রেজিস্ট্রেশন নম্বর",
-      "শিক্ষা বোর্ড",
-      "পাসের সন",
-      "প্রাপ্ত GPA",
-      "শিক্ষার্থীর নাম (বাংলা)",
-      "শিক্ষার্থীর নাম (English)",
-      "শিক্ষার্থীর মোবাইল",
-      "পিতার নাম (বাংলা)",
-      "পিতার নাম (English)",
-      "পিতার মোবাইল",
-      "মাতার নাম (বাংলা)",
-      "মাতার নাম (English)",
-      "মাতার মোবাইল",
-      "বর্তমান ঠিকানা",
-      "স্থায়ী ঠিকানা",
-      "বাধ্যতামূলক বিষয়",
-      "৪র্থ বিষয় (Elective 4)",
-      "৫ম বিষয় (Elective 5)",
-      "৬ষ্ঠ বিষয় (Elective 6)",
-      "৭ম বিষয় (ঐচ্ছিক)",
-      "আবেদন দাখিলের সময়",
-      "সিঙ্ক সময়"
-    ];
-    
-    sheet.appendRow(headers);
-    
-    var headerRange = sheet.getRange(1, 1, 1, headers.length);
-    headerRange.setBackground("#047857");
-    headerRange.setFontColor("#ffffff");
-    headerRange.setFontWeight("bold");
-    headerRange.setHorizontalAlignment("center");
-    sheet.setFrozenRows(1);
-    sheet.setRowHeight(1, 35);
-    
-    // Set Photo column width
-    sheet.setColumnWidth(2, 95);
-    sheet.setColumnWidth(3, 130);
+    sheet.appendRow(standardHeaders);
+  } else {
+    // If existing sheet has old headers (where col B is not photo), auto-update header row
+    var firstRow = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), standardHeaders.length)).getValues()[0];
+    var col2 = String(firstRow[1] || '').trim();
+    if (!col2.includes("ছবি") && !col2.includes("Photo")) {
+      // Old header layout detected, overwrite first row with new header structure
+      sheet.getRange(1, 1, 1, standardHeaders.length).setValues([standardHeaders]);
+    }
   }
+  
+  var headerRange = sheet.getRange(1, 1, 1, standardHeaders.length);
+  headerRange.setBackground("#047857");
+  headerRange.setFontColor("#ffffff");
+  headerRange.setFontWeight("bold");
+  headerRange.setHorizontalAlignment("center");
+  sheet.setFrozenRows(1);
+  sheet.setRowHeight(1, 35);
+  sheet.setColumnWidth(2, 95);
+  sheet.setColumnWidth(3, 130);
 }
 
 function doPost(e) {
@@ -198,14 +218,17 @@ function doPost(e) {
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = spreadsheet.getActiveSheet();
     
-    setupHeadersIfEmpty(sheet);
+    ensureCorrectHeaders(sheet);
     
     var data = JSON.parse(e.postData.contents);
     
     if (data.action === 'TEST_PING') {
+      var folder = getOrCreatePhotoFolder();
       return ContentService.createTextOutput(JSON.stringify({
         status: 'success',
-        message: 'গুগল শিট কানেকশন সফলভাবে কাজ করছে!'
+        message: 'গুগল শিট ও গুগল ড্রাইভ কানেকশন সফলভাবে কাজ করছে!',
+        folderName: folder.getName(),
+        folderUrl: folder.getUrl()
       })).setMimeType(ContentService.MimeType.JSON);
     }
     
@@ -213,14 +236,15 @@ function doPost(e) {
     var trackingId = String(data.trackingId || '').trim();
     var studentNameEn = String(data.studentNameEn || 'STUDENT').trim().replace(/[^a-zA-Z0-9]/g, '_');
     
-    // Check for existing record by SSC Roll (Column 9: SSC Roll)
+    // Check for existing record by SSC Roll (Col 9 in 1-based, index 8 in 0-based)
     var dataRange = sheet.getDataRange();
     var values = dataRange.getValues();
     var rowIndexToUpdate = -1;
     
     for (var i = 1; i < values.length; i++) {
-      var rowRoll = String(values[i][8]).trim(); // Index 8 is 9th column: SSC Roll
-      if (rowRoll && rowRoll === sscRoll) {
+      var rowRoll = String(values[i][8]).trim();
+      // If old format was 7th col, check that too
+      if (rowRoll === sscRoll || String(values[i][6]).trim() === sscRoll) {
         rowIndexToUpdate = i + 1;
         break;
       }
@@ -232,16 +256,19 @@ function doPost(e) {
     // Process student photo
     var photoFormula = "";
     var photoDriveUrl = "";
+    var photoDebug = null;
     
-    if (data.photoBase64 && data.photoBase64.length > 50) {
+    if (data.photoBase64 && String(data.photoBase64).length > 50) {
       var photoFileName = sscRoll + "_" + studentNameEn + ".jpg";
       var photoResult = savePhotoToDrive(data.photoBase64, photoFileName);
+      photoDebug = photoResult;
       if (photoResult.directUrl) {
         photoFormula = '=IMAGE("' + photoResult.directUrl + '", 1)';
         photoDriveUrl = photoResult.url;
+      } else if (photoResult.error) {
+        photoDriveUrl = "Error: " + photoResult.error;
       }
     } else if (rowIndexToUpdate > 0) {
-      // Keep existing photo if not provided in this update
       photoFormula = values[rowIndexToUpdate - 1][1] || "";
       photoDriveUrl = values[rowIndexToUpdate - 1][2] || "";
     }
@@ -288,13 +315,15 @@ function doPost(e) {
       sheet.appendRow(rowData);
     }
     
-    // Set comfortable row height for photo thumbnail visibility
+    // Set row height for photo visibility
     sheet.setRowHeight(targetRow, 70);
     
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
       message: 'শিক্ষার্থীর তথ্য ও ছবি সফলভাবে গুগল শিটে রেকর্ড করা হয়েছে।',
-      trackingId: trackingId
+      trackingId: trackingId,
+      photoResult: photoDebug,
+      rowUpdated: targetRow
     })).setMimeType(ContentService.MimeType.JSON);
     
   } catch (err) {

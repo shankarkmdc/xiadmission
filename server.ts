@@ -130,6 +130,8 @@ app.post('/api/sync-to-sheet', async (req, res) => {
     };
 
     // Node native fetch to Google Apps Script
+    console.log(`[SyncToSheet] Sending app roll=${payload.sscRoll} hasPhoto=${Boolean(payload.photoBase64 && payload.photoBase64.length > 50)} photoLen=${payload.photoBase64?.length || 0} to ${targetUrl.substring(0, 45)}...`);
+
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
@@ -140,6 +142,8 @@ app.post('/api/sync-to-sheet', async (req, res) => {
     });
 
     const responseText = await response.text();
+    console.log(`[SyncToSheet] Apps Script raw response:`, responseText.substring(0, 200));
+
     let responseJson = null;
     try {
       responseJson = JSON.parse(responseText);
@@ -147,10 +151,13 @@ app.post('/api/sync-to-sheet', async (req, res) => {
       // Sometimes Apps Script returns plain text
     }
 
+    const scriptSuccess = !responseJson || responseJson.status !== 'error';
+
     return res.json({
-      success: true,
-      message: 'গুগল শিটে সফলভাবে রেকর্ড করা হয়েছে!',
+      success: scriptSuccess,
+      message: responseJson?.message || (scriptSuccess ? 'গুগল শিটে সফলভাবে রেকর্ড করা হয়েছে!' : 'Apps Script ত্রুটি দিয়েছে'),
       data: responseJson || responseText,
+      hasPhoto: Boolean(payload.photoBase64 && payload.photoBase64.length > 50),
     });
   } catch (error: any) {
     console.error('Server sync-to-sheet error:', error);

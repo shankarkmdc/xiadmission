@@ -423,13 +423,13 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
                 <strong className="text-white">কোড পেস্ট করুন:</strong> স্ক্রিপ্ট এডিটরের কোড মুছে নিচের বাটনে ক্লিক করে কোডটি কপি করে পেস্ট করুন।
               </li>
               <li>
-                <strong className="text-white">Web App ডেপ্লয় করুন:</strong>
+                <strong className="text-white">Web App ডেপ্লয় / আপডেট করুন:</strong>
                 <ul className="list-disc list-inside pl-3 mt-1 space-y-1 text-slate-300 text-[11px]">
-                  <li>উপরে ডানে <span className="text-white font-semibold">Deploy &gt; New deployment</span> চাপুন।</li>
-                  <li>গিয়ার আইকন থেকে <span className="text-white font-semibold">Web app</span> নির্বাচন করুন।</li>
+                  <li>উপরে ডানে <span className="text-white font-semibold">Deploy &gt; Manage deployments</span>-এ যান (বা New deployment)।</li>
+                  <li>পেনসিল (✏️ Edit) আইকনে ক্লিক করে Version-এ <span className="text-amber-300 font-bold">New version</span> নির্বাচন করুন।</li>
                   <li>Execute as: <span className="text-white font-semibold">Me (আপনার ইমেইল)</span></li>
-                  <li>Who has access: <span className="text-amber-300 font-bold">Anyone</span> (এটি আবশ্যক, যাতে ছাত্রীদের ডিভাইস থেকে ডেটা পৌঁছাতে পারে)।</li>
-                  <li><span className="text-white font-semibold">Deploy</span> বাটনে চাপ দিন এবং অনুমতি (Authorize) দিন।</li>
+                  <li>Who has access: <span className="text-amber-300 font-bold">Anyone</span> (এটি আবশ্যক)।</li>
+                  <li><span className="text-white font-semibold">Deploy</span> বাটনে চাপ দিন। গুগল ড্রাইভে ছবি সেভ করার জন্য <span className="text-emerald-400 font-bold">Authorize access / Allow</span> অনুমতি দিতে বলবে, অনুমতি দিন।</li>
                 </ul>
               </li>
               <li>
