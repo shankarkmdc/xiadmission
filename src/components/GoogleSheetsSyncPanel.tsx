@@ -420,16 +420,24 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
                 <strong className="text-white">Apps Script খুলুন:</strong> গুগল শিটের মেনু থেকে <span className="text-amber-300 font-semibold">Extensions &gt; Apps Script</span>-এ ক্লিক করুন।
               </li>
               <li>
-                <strong className="text-white">কোড পেস্ট করুন:</strong> স্ক্রিপ্ট এডিটরের কোড মুছে নিচের বাটনে ক্লিক করে কোডটি কপি করে পেস্ট করুন।
+                <strong className="text-white">কোড পেস্ট ও সংরক্ষণ:</strong> স্ক্রিপ্ট এডিটরের সমস্ত কোড মুছে নিচের বাটন থেকে কোডটি কপি করে পেস্ট করুন এবং <span className="text-amber-300 font-semibold">Save (Ctrl + S)</span> করুন।
+              </li>
+              <li className="bg-amber-950/40 p-2.5 rounded-lg border border-amber-500/30 text-amber-200">
+                <strong className="text-amber-300">গুগল ড্রাইভ পারমিশন অনুমোদন (সবচেয়ে গুরুত্বপূর্ণ ধাপ):</strong>
+                <p className="mt-1 text-[11px] text-slate-200">
+                  Apps Script এডিটরের উপরের মেনুবারে ফাংশন ড্রপডাউন থেকে <span className="font-mono text-emerald-300 font-bold bg-slate-900 px-1 py-0.5 rounded">initialSetupAndAuthorizeDrive</span> নির্বাচন করুন এবং পাশে থাকা <span className="text-white font-bold bg-slate-800 px-1.5 py-0.5 rounded">▷ Run</span> বাটনে ক্লিক করুন।
+                </p>
+                <p className="mt-1 text-[11px] text-amber-300">
+                  ➔ সাথে সাথে স্ক্রিনে <strong>Authorization Required</strong> পপআপ আসবে। <strong>Review permissions</strong> &gt; আপনার জিমেইল একাউন্ট নির্বাচন করুন &gt; <strong>Advanced</strong> &gt; <strong>Go to ... (unsafe)</strong> &gt; <strong>Allow</strong> বাটনে ক্লিক করুন। এতে ড্রাইভে ফোল্ডার তৈরি হবে ও পারমিশন স্থায়ীভাবে চালু হবে।
+                </p>
               </li>
               <li>
-                <strong className="text-white">Web App ডেপ্লয় / আপডেট করুন:</strong>
+                <strong className="text-white">Web App ডেপ্লয় / New Version আপডেট:</strong>
                 <ul className="list-disc list-inside pl-3 mt-1 space-y-1 text-slate-300 text-[11px]">
-                  <li>উপরে ডানে <span className="text-white font-semibold">Deploy &gt; Manage deployments</span>-এ যান (বা New deployment)।</li>
-                  <li>পেনসিল (✏️ Edit) আইকনে ক্লিক করে Version-এ <span className="text-amber-300 font-bold">New version</span> নির্বাচন করুন।</li>
-                  <li>Execute as: <span className="text-white font-semibold">Me (আপনার ইমেইল)</span></li>
-                  <li>Who has access: <span className="text-amber-300 font-bold">Anyone</span> (এটি আবশ্যক)।</li>
-                  <li><span className="text-white font-semibold">Deploy</span> বাটনে চাপ দিন। গুগল ড্রাইভে ছবি সেভ করার জন্য <span className="text-emerald-400 font-bold">Authorize access / Allow</span> অনুমতি দিতে বলবে, অনুমতি দিন।</li>
+                  <li>উপরে ডানে <span className="text-white font-semibold">Deploy &gt; Manage deployments</span>-এ যান।</li>
+                  <li>পেনসিল (✏️ Edit) আইকনে ক্লিক করে Version ড্রপডাউন থেকে <span className="text-amber-300 font-bold">New version</span> নির্বাচন করুন।</li>
+                  <li>Execute as: <span className="text-white font-semibold">Me (আপনার ইমেইল)</span> এবং Who has access: <span className="text-amber-300 font-bold">Anyone</span> রাখুন।</li>
+                  <li><span className="text-white font-semibold">Deploy</span> বাটনে চাপ দিন।</li>
                 </ul>
               </li>
               <li>

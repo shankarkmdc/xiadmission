@@ -96,7 +96,20 @@ if (typeof window !== 'undefined') {
  * 5. Automatic Row Appending / Updating without duplicates by SSC Roll
  * 6. Detailed error logging in return JSON
  */
-export const GOOGLE_APPS_SCRIPT_CODE = `function getOrCreatePhotoFolder() {
+export const GOOGLE_APPS_SCRIPT_CODE = `/**
+ * ধাপ ১ (অনুমোদন পরীক্ষা):
+ * কোড পেস্ট ও সেভ করার পর উপরের টুলবারের ড্রপডাউন থেকে এই ফাংশনটি (initialSetupAndAuthorizeDrive) সিলেক্ট করে "▷ Run" বাটনে ক্লিক করুন।
+ * এতে ড্রাইভের পারমিশনের জন্য গুগল থেকে "Authorization Required" পপআপ আসবে। Review Permissions > Advanced > Go to Untitled project (unsafe) > Allow দিন।
+ */
+function initialSetupAndAuthorizeDrive() {
+  var folder = getOrCreatePhotoFolder();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  ensureCorrectHeaders(sheet);
+  Logger.log("Folder created/verified successfully: " + folder.getName() + " URL: " + folder.getUrl());
+  return "সফল! গুগল ড্রাইভ ফোল্ডার তৈরি হয়েছে এবং ড্রাইভ পারমিশন অনুমোদন সম্পন্ন হয়েছে: " + folder.getUrl();
+}
+
+function getOrCreatePhotoFolder() {
   var folderName = "KMDC_Admission_Student_Photos_2026";
   var folders = DriveApp.getFoldersByName(folderName);
   if (folders.hasNext()) {
