@@ -484,6 +484,8 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
             <div className="flex flex-wrap gap-1 text-[10px] text-slate-700 pt-1">
               {[
                 'ক্রমিক',
+                'শিক্ষার্থীর ছবি (Photo Thumbnail)',
+                'ছবির ড্রাইভ লিংক (Drive URL)',
                 'ট্র্যাকিং আইডি',
                 'শ্রেণি রোল',
                 'স্ট্যাটাস',

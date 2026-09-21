@@ -88,11 +88,62 @@ if (typeof window !== 'undefined') {
 
 /**
  * Pre-formatted Google Apps Script code to paste into Google Sheet Script Editor.
+ * Includes:
+ * 1. Automatic Column Headers initialization
+ * 2. Student Passport Photo upload to Google Drive folder ('KMDC_Admission_Student_Photos_2026')
+ * 3. Direct IMAGE() formula thumbnail inside Google Sheet cell
+ * 4. Clickable direct view link for the student's photo
+ * 5. Automatic Row Appending / Updating without duplicates by SSC Roll
  */
-export const GOOGLE_APPS_SCRIPT_CODE = `function setupHeadersIfEmpty(sheet) {
+export const GOOGLE_APPS_SCRIPT_CODE = `function getOrCreatePhotoFolder() {
+  var folderName = "KMDC_Admission_Student_Photos_2026";
+  var folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return DriveApp.createFolder(folderName);
+}
+
+function savePhotoToDrive(base64Data, filename) {
+  try {
+    if (!base64Data || !base64Data.includes("base64,")) {
+      return { url: "", directUrl: "" };
+    }
+    var parts = base64Data.split("base64,");
+    var contentType = parts[0].split(";")[0].replace("data:", "") || "image/jpeg";
+    var decoded = Utilities.base64Decode(parts[1]);
+    var blob = Utilities.newBlob(decoded, contentType, filename);
+    
+    var folder = getOrCreatePhotoFolder();
+    
+    // Check if an existing file with this name exists in folder
+    var existingFiles = folder.getFilesByName(filename);
+    while (existingFiles.hasNext()) {
+      existingFiles.next().setTrashed(true);
+    }
+    
+    var file = folder.createFile(blob);
+    // Allow anyone with link to view the image thumbnail in sheets
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    var fileId = file.getId();
+    var viewUrl = file.getUrl();
+    // Direct thumbnail URL for IMAGE() formula
+    var directUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+    
+    return { url: viewUrl, directUrl: directUrl };
+  } catch (e) {
+    Logger.log("Error saving photo: " + e.toString());
+    return { url: "", directUrl: "" };
+  }
+}
+
+function setupHeadersIfEmpty(sheet) {
   if (sheet.getLastRow() === 0) {
     var headers = [
       "ক্রমিক",
+      "শিক্ষার্থীর ছবি (Photo)",
+      "ছবির ড্রাইভ লিংক (Drive URL)",
       "ট্র্যাকিং আইডি",
       "শ্রেণি রোল (বরাদ্দকৃত)",
       "ভর্তির স্ট্যাটাস",
@@ -131,6 +182,11 @@ export const GOOGLE_APPS_SCRIPT_CODE = `function setupHeadersIfEmpty(sheet) {
     headerRange.setFontWeight("bold");
     headerRange.setHorizontalAlignment("center");
     sheet.setFrozenRows(1);
+    sheet.setRowHeight(1, 35);
+    
+    // Set Photo column width
+    sheet.setColumnWidth(2, 95);
+    sheet.setColumnWidth(3, 130);
   }
 }
 
@@ -155,13 +211,15 @@ function doPost(e) {
     
     var sscRoll = String(data.sscRoll || '').trim();
     var trackingId = String(data.trackingId || '').trim();
+    var studentNameEn = String(data.studentNameEn || 'STUDENT').trim().replace(/[^a-zA-Z0-9]/g, '_');
     
+    // Check for existing record by SSC Roll (Column 9: SSC Roll)
     var dataRange = sheet.getDataRange();
     var values = dataRange.getValues();
     var rowIndexToUpdate = -1;
     
     for (var i = 1; i < values.length; i++) {
-      var rowRoll = String(values[i][6]).trim();
+      var rowRoll = String(values[i][8]).trim(); // Index 8 is 9th column: SSC Roll
       if (rowRoll && rowRoll === sscRoll) {
         rowIndexToUpdate = i + 1;
         break;
@@ -171,8 +229,27 @@ function doPost(e) {
     var serial = rowIndexToUpdate > 0 ? values[rowIndexToUpdate - 1][0] : (values.length);
     var nowStr = Utilities.formatDate(new Date(), "Asia/Dhaka", "dd/MM/yyyy hh:mm:ss a");
     
+    // Process student photo
+    var photoFormula = "";
+    var photoDriveUrl = "";
+    
+    if (data.photoBase64 && data.photoBase64.length > 50) {
+      var photoFileName = sscRoll + "_" + studentNameEn + ".jpg";
+      var photoResult = savePhotoToDrive(data.photoBase64, photoFileName);
+      if (photoResult.directUrl) {
+        photoFormula = '=IMAGE("' + photoResult.directUrl + '", 1)';
+        photoDriveUrl = photoResult.url;
+      }
+    } else if (rowIndexToUpdate > 0) {
+      // Keep existing photo if not provided in this update
+      photoFormula = values[rowIndexToUpdate - 1][1] || "";
+      photoDriveUrl = values[rowIndexToUpdate - 1][2] || "";
+    }
+    
     var rowData = [
       serial,
+      photoFormula, // Column 2: In-cell Image thumbnail
+      photoDriveUrl, // Column 3: Drive Full Photo View URL
       trackingId,
       data.classRoll || 'Not Allocated',
       data.status === 'ACCEPTED' ? 'ভর্তি গৃহীত' : (data.status === 'EDIT_PERMITTED' ? 'সংশোধন অনুমোদিত' : 'দাখিলকৃত'),
@@ -203,15 +280,20 @@ function doPost(e) {
       nowStr
     ];
     
+    var targetRow = rowIndexToUpdate > 0 ? rowIndexToUpdate : (values.length + 1);
+    
     if (rowIndexToUpdate > 0) {
       sheet.getRange(rowIndexToUpdate, 1, 1, rowData.length).setValues([rowData]);
     } else {
       sheet.appendRow(rowData);
     }
     
+    // Set comfortable row height for photo thumbnail visibility
+    sheet.setRowHeight(targetRow, 70);
+    
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
-      message: 'ডেটা গুগল শিটে সফলভাবে রেকর্ড করা হয়েছে।',
+      message: 'শিক্ষার্থীর তথ্য ও ছবি সফলভাবে গুগল শিটে রেকর্ড করা হয়েছে।',
       trackingId: trackingId
     })).setMimeType(ContentService.MimeType.JSON);
     
@@ -244,7 +326,7 @@ export async function sendApplicationToGoogleSheets(
   const targetUrl = (webhookUrlOverride || config.webhookUrl || '').trim();
 
   // 1. First attempt: Use central server proxy (/api/sync-to-sheet)
-  // This completely bypasses browser CORS restrictions and works from mobile phones, tablets, etc.!
+  // This completely bypasses browser CORS restrictions, works across devices, and transmits photoBase64
   try {
     const serverRes = await fetch('/api/sync-to-sheet', {
       method: 'POST',
@@ -260,7 +342,7 @@ export async function sendApplicationToGoogleSheets(
       if (json.success) {
         return {
           success: true,
-          message: 'গুগল শিটে লাইভ ডেটা পাঠানো হয়েছে!',
+          message: 'গুগল শিটে লাইভ ডেটা ও ছবি পাঠানো হয়েছে!',
         };
       }
     }
@@ -290,6 +372,7 @@ export async function sendApplicationToGoogleSheets(
     studentNameBn: app.studentNameBn,
     studentNameEn: app.studentNameEn,
     studentMobile: app.studentMobile,
+    photoBase64: app.photoBase64 || '', // Student photo
     fatherNameBn: app.fatherNameBn,
     fatherNameEn: app.fatherNameEn,
     fatherMobile: app.fatherMobile,

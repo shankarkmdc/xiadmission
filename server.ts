@@ -9,8 +9,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Persistent server config file for Google Sheets webhook & applications
 const DATA_DIR = path.join(process.cwd(), '.kmdc_data');
@@ -73,7 +73,7 @@ app.post('/api/sheets-config', (req, res) => {
 });
 
 // 3. Central Proxy Route: Send application to Google Sheets from Server
-// This completely avoids CORS errors and works seamlessly across all mobile/desktop devices!
+// This completely avoids CORS errors, works across mobile/desktop, and transmits photoBase64
 app.post('/api/sync-to-sheet', async (req, res) => {
   try {
     const { application, webhookUrlOverride } = req.body;
@@ -108,6 +108,7 @@ app.post('/api/sync-to-sheet', async (req, res) => {
       studentNameBn: application.studentNameBn,
       studentNameEn: application.studentNameEn,
       studentMobile: application.studentMobile,
+      photoBase64: application.photoBase64 || '', // Student photo for Google Drive & thumbnail
       fatherNameBn: application.fatherNameBn,
       fatherNameEn: application.fatherNameEn,
       fatherMobile: application.fatherMobile,
@@ -128,7 +129,7 @@ app.post('/api/sync-to-sheet', async (req, res) => {
       syncTimestamp: new Date().toISOString(),
     };
 
-    // Node-fetch / native fetch to Google Apps Script
+    // Node native fetch to Google Apps Script
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
@@ -143,7 +144,7 @@ app.post('/api/sync-to-sheet', async (req, res) => {
     try {
       responseJson = JSON.parse(responseText);
     } catch {
-      // Sometimes Apps Script returns text
+      // Sometimes Apps Script returns plain text
     }
 
     return res.json({
