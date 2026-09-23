@@ -38,23 +38,40 @@ export function getGoogleSheetsConfig(): GoogleSheetsConfig {
 }
 
 /**
- * Fetch centralized server config so ANY student device immediately has the Webhook URL
+ * Fetch centralized server config so ANY student device immediately has the Webhook URL.
+ * If server is empty but current device has a local webhook URL, automatically upload to server!
  */
 export async function fetchServerSheetsConfig(): Promise<GoogleSheetsConfig> {
+  const localConfig = getGoogleSheetsConfig();
   try {
     const res = await fetch('/api/sheets-config');
     if (res.ok) {
       const json = await res.json();
       if (json.config && json.config.webhookUrl) {
+        // Server has config - update local storage & memory
         saveGoogleSheetsConfig(json.config, false);
         inMemoryConfig = json.config;
         return json.config;
+      } else if (localConfig.webhookUrl) {
+        // Server is missing the webhook URL, but this device has it!
+        // Immediately sync local config up to the central server so all other devices receive it!
+        try {
+          await fetch('/api/sheets-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(localConfig),
+          });
+          console.log('Successfully synced local Google Sheets config to central server.');
+        } catch (uploadErr) {
+          console.warn('Could not auto-upload local config to server:', uploadErr);
+        }
+        return localConfig;
       }
     }
   } catch (err) {
     console.warn('Could not fetch server sheets config, using local cache:', err);
   }
-  return getGoogleSheetsConfig();
+  return localConfig;
 }
 
 /**
@@ -81,7 +98,7 @@ export async function saveGoogleSheetsConfig(config: GoogleSheetsConfig, syncToS
   }
 }
 
-// Automatically fetch on startup
+// Automatically fetch & sync on startup
 if (typeof window !== 'undefined') {
   fetchServerSheetsConfig().catch(() => {});
 }

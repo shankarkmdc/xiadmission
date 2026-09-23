@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { EligibleStudent, AdmissionApplication } from '../types';
-import { findEligibleStudentByRoll, findApplicationByRoll, getEligibleStudents } from '../services/storage';
+import { findEligibleStudentByRoll, findApplicationByRoll, getEligibleStudents, fetchServerApplications } from '../services/storage';
 import { Search, Sparkles, CheckCircle2, AlertCircle, FileText, Download, ArrowRight, RefreshCw, KeyRound, ShieldAlert } from 'lucide-react';
 
 interface StudentSearchProps {
@@ -18,9 +18,13 @@ export const StudentSearch: React.FC<StudentSearchProps> = ({
   const [application, setApplication] = useState<AdmissionApplication | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    fetchServerApplications().catch(() => {});
+  }, []);
+
   const eligibleList = getEligibleStudents();
 
-  const handleSearch = (rollToSearch?: string) => {
+  const handleSearch = async (rollToSearch?: string) => {
     const targetRoll = (rollToSearch || rollInput).trim();
     if (!targetRoll) {
       setErrorMsg('অনুগ্রহ করে আপনার এসএসসি/দাখিল পরীক্ষার রোল নম্বর লিখুন।');
@@ -41,7 +45,11 @@ export const StudentSearch: React.FC<StudentSearchProps> = ({
     }
 
     setStudent(foundStudent);
-    const existingApp = findApplicationByRoll(targetRoll);
+    let existingApp = findApplicationByRoll(targetRoll);
+    if (!existingApp) {
+      const serverApps = await fetchServerApplications();
+      existingApp = serverApps.find((a) => a.sscRoll.trim() === targetRoll);
+    }
     setApplication(existingApp || null);
   };
 

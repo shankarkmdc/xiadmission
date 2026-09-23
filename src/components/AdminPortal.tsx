@@ -11,6 +11,7 @@ import {
   exportApplicationsToExcel,
   downloadEligibleStudentsTemplate,
   downloadPhotosZip,
+  fetchServerApplications,
 } from '../services/storage';
 import {
   getGoogleSheetsConfig,
@@ -98,10 +99,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
   const [syncingAppId, setSyncingAppId] = useState<string | null>(null);
 
   // Reload data
-  const refreshData = () => {
-    setApplications(getApplications());
+  const refreshData = async () => {
+    try {
+      const serverApps = await fetchServerApplications();
+      setApplications(serverApps);
+    } catch {
+      setApplications(getApplications());
+    }
     setEligibleStudents(getEligibleStudents());
   };
+
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      refreshData();
+    }
+  }, [isAuthenticated, adminTab]);
 
   // Login handler
   const handleLogin = (e: React.FormEvent) => {

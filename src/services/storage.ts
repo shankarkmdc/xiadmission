@@ -60,8 +60,90 @@ export function getApplications(): AdmissionApplication[] {
   }
 }
 
-export function saveApplications(apps: AdmissionApplication[]): void {
-  localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+export function saveApplications(apps: AdmissionApplication[], syncToServer: boolean = true): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+  } catch (err) {
+    console.error('Failed to save applications to localStorage:', err);
+  }
+
+  if (syncToServer && typeof fetch !== 'undefined') {
+    fetch('/api/applications/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ applications: apps }),
+    }).catch((err) => {
+      console.warn('Could not sync applications to server:', err);
+    });
+  }
+}
+
+export async function saveSingleApplicationToServer(app: AdmissionApplication): Promise<void> {
+  // Update local
+  const current = getApplications();
+  const filtered = current.filter((a) => a.sscRoll !== app.sscRoll);
+  filtered.push(app);
+  try {
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(filtered));
+  } catch {}
+
+  // Push to server
+  try {
+    await fetch('/api/applications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ application: app }),
+    });
+  } catch (err) {
+    console.warn('Could not post single application to server:', err);
+  }
+}
+
+export async function fetchServerApplications(): Promise<AdmissionApplication[]> {
+  try {
+    const res = await fetch('/api/applications');
+    if (res.ok) {
+      const json = await res.json();
+      const serverApps: AdmissionApplication[] = json.applications || [];
+      const localApps = getApplications();
+
+      // Merge local and server apps by SSC Roll
+      const appMap = new Map<string, AdmissionApplication>();
+      localApps.forEach((a) => appMap.set(a.sscRoll.trim(), a));
+      serverApps.forEach((a) => {
+        const roll = a.sscRoll.trim();
+        const existing = appMap.get(roll);
+        // If server has newer or existing doesn't exist
+        if (!existing || (a.updatedAt && (!existing.updatedAt || a.updatedAt > existing.updatedAt))) {
+          appMap.set(roll, { ...existing, ...a });
+        }
+      });
+
+      const merged = Array.from(appMap.values());
+      try {
+        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(merged));
+      } catch {}
+
+      // If local had apps that server lacked, sync them back to server
+      if (localApps.length > serverApps.length) {
+        fetch('/api/applications/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applications: merged }),
+        }).catch(() => {});
+      }
+
+      return merged;
+    }
+  } catch (err) {
+    console.warn('Could not fetch server applications:', err);
+  }
+  return getApplications();
+}
+
+// Auto-sync applications on browser load
+if (typeof window !== 'undefined') {
+  fetchServerApplications().catch(() => {});
 }
 
 export function findApplicationByRoll(roll: string): AdmissionApplication | undefined {

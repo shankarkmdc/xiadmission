@@ -39,6 +39,7 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   const [webhookUrl, setWebhookUrl] = useState<string>(config.webhookUrl);
   const [sheetUrl, setSheetUrl] = useState<string>(config.sheetUrl);
   const [autoSync, setAutoSync] = useState<boolean>(config.autoSync);
+  const [serverSynced, setServerSynced] = useState<boolean>(false);
 
   // Fetch centralized config from server on mount
   useEffect(() => {
@@ -48,6 +49,12 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
         setWebhookUrl(serverCfg.webhookUrl);
         setSheetUrl(serverCfg.sheetUrl || '');
         setAutoSync(serverCfg.autoSync !== false);
+        setServerSynced(true);
+      } else if (getGoogleSheetsConfig().webhookUrl) {
+        // Local has it, auto-push to server
+        saveGoogleSheetsConfig(getGoogleSheetsConfig(), true).then(() => {
+          setServerSynced(true);
+        });
       }
     });
   }, []);
@@ -70,17 +77,18 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   const unsyncedCount = applications.length - syncedCount;
 
   // Save Settings
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const newConfig: GoogleSheetsConfig = {
       webhookUrl: webhookUrl.trim(),
       sheetUrl: sheetUrl.trim(),
       autoSync,
     };
-    saveGoogleSheetsConfig(newConfig);
+    await saveGoogleSheetsConfig(newConfig, true);
     setConfig(newConfig);
+    setServerSynced(Boolean(newConfig.webhookUrl));
     setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3500);
+    setTimeout(() => setSaveSuccess(false), 4500);
   };
 
   // Test Webhook Connection
@@ -232,8 +240,33 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
               গুগল শিট Webhook সংযোগ সেটিংস
             </h4>
             <p className="text-xs text-slate-500 mb-4">
-              গুগল শিটের Apps Script Deploy থেকে প্রাপ্ত Web App URL-টি নিচে পেস্ট করে সংরক্ষণ করুন।
+              গুগল শিটের Apps Script Deploy থেকে প্রাপ্ত Web App URL-টি নিচে পেস্ট করে সংরক্ষণ করুন। এটি সেন্ট্রাল সার্ভারে সংরক্ষিত হবে যাতে যে কোনো ডিভাইস থেকে ছাত্রীরা আবেদন করলে স্বয়ংক্রিয়ভাবে আপনার গুগল শিটে জমা হয়।
             </p>
+
+            {/* Cross-Device Server Status Indicator */}
+            <div className={`mb-4 p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+              serverSynced && webhookUrl.trim()
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}>
+              {serverSynced && webhookUrl.trim() ? (
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <strong className="font-bold block">
+                  {serverSynced && webhookUrl.trim()
+                    ? 'সার্ভার-ব্যাপী লাইভ সিঙ্ক সক্রিয় (All Devices Connected)'
+                    : 'সার্ভারে সংরক্ষণ প্রয়োজন'}
+                </strong>
+                <span className="text-[11px] leading-relaxed block mt-0.5">
+                  {serverSynced && webhookUrl.trim()
+                    ? 'Webhook URL-টি কেন্দ্রীয় সার্ভারে সংরক্ষিত আছে। শিক্ষার্থী বা অভিভাবক যে কোনো মোবাইল বা কম্পিউটার থেকে আবেদন করলেও সরাসরি আপনার গুগল শিটে যুক্ত হবে।'
+                    : 'নিচে আপনার Google Apps Script Web App URL পেস্ট করে "সেটিংস সংরক্ষণ করুন" বাটনে ক্লিক করুন।'}
+                </span>
+              </div>
+            </div>
 
             <form onSubmit={handleSave} className="space-y-4">
               <div>
