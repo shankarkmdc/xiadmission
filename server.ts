@@ -18,6 +18,7 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 const CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
+const APPLICATIONS_FILE = path.join(DATA_DIR, 'applications.json');
 
 function readServerSheetsConfig() {
   try {
@@ -42,11 +43,48 @@ function writeServerSheetsConfig(config: any) {
   }
 }
 
+function readServerApplications(): any[] {
+  try {
+    if (fs.existsSync(APPLICATIONS_FILE)) {
+      const data = fs.readFileSync(APPLICATIONS_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading server applications:', err);
+  }
+  return [];
+}
+
+function writeServerApplications(apps: any[]) {
+  try {
+    fs.writeFileSync(APPLICATIONS_FILE, JSON.stringify(apps, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving server applications:', err);
+  }
+}
+
+function upsertServerApplication(app: any) {
+  try {
+    const apps = readServerApplications();
+    const index = apps.findIndex((a: any) => a.sscRoll === app.sscRoll || a.trackingId === app.trackingId);
+    if (index >= 0) {
+      apps[index] = { ...apps[index], ...app, updatedAt: new Date().toISOString() };
+    } else {
+      apps.push(app);
+    }
+    writeServerApplications(apps);
+    return apps;
+  } catch (err) {
+    console.error('Error upserting server application:', err);
+    return [];
+  }
+}
+
 // -------------------------------------------------------------
 // API Routes
 // -------------------------------------------------------------
 
-// 1. Get current Google Sheets config (so student devices get the Webhook URL)
+// 1. Get current Google Sheets config
 app.get('/api/sheets-config', (req, res) => {
   const cfg = readServerSheetsConfig();
   res.json({
@@ -55,7 +93,7 @@ app.get('/api/sheets-config', (req, res) => {
   });
 });
 
-// 2. Save Google Sheets config from Admin Portal
+// 2. Save Google Sheets config
 app.post('/api/sheets-config', (req, res) => {
   const { webhookUrl, sheetUrl, autoSync } = req.body;
   const newConfig = {
@@ -70,6 +108,46 @@ app.post('/api/sheets-config', (req, res) => {
     config: newConfig,
     message: 'Google Sheets configuration saved successfully on server.',
   });
+});
+
+// 3. Get all applications from central database (for any device or Admin Portal)
+app.get('/api/applications', (req, res) => {
+  const apps = readServerApplications();
+  res.json({ success: true, applications: apps });
+});
+
+// 4. Upsert single application
+app.post('/api/applications', (req, res) => {
+  const application = req.body.application || req.body;
+  if (!application || !application.sscRoll) {
+    return res.status(400).json({ success: false, message: 'Invalid application data' });
+  }
+  const updatedApps = upsertServerApplication(application);
+  return res.json({ success: true, count: updatedApps.length });
+});
+
+// 5. Bulk sync applications
+app.post('/api/applications/bulk', (req, res) => {
+  const incomingApps = Array.isArray(req.body.applications) ? req.body.applications : [];
+  const currentApps = readServerApplications();
+  const appMap = new Map<string, any>();
+  currentApps.forEach((a: any) => appMap.set(String(a.sscRoll).trim(), a));
+  incomingApps.forEach((a: any) => {
+    const roll = String(a.sscRoll).trim();
+    if (roll) {
+      appMap.set(roll, { ...(appMap.get(roll) || {}), ...a });
+    }
+  });
+  const merged = Array.from(appMap.values());
+  writeServerApplications(merged);
+  return res.json({ success: true, count: merged.length });
+});
+
+// 6. Replace applications (for deletions or full updates)
+app.post('/api/applications/replace', (req, res) => {
+  const incomingApps = Array.isArray(req.body.applications) ? req.body.applications : [];
+  writeServerApplications(incomingApps);
+  return res.json({ success: true, count: incomingApps.length });
 });
 
 // 3. Central Proxy Route: Send application to Google Sheets from Server

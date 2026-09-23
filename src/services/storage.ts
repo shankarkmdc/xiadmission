@@ -68,7 +68,7 @@ export function saveApplications(apps: AdmissionApplication[], syncToServer: boo
   }
 
   if (syncToServer && typeof fetch !== 'undefined') {
-    fetch('/api/applications/bulk', {
+    fetch('/api/applications/replace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ applications: apps }),

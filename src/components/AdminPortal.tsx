@@ -112,6 +112,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
   React.useEffect(() => {
     if (isAuthenticated) {
       refreshData();
+      // Auto-poll server every 6 seconds so applications from other devices show up in real-time
+      const interval = setInterval(() => {
+        refreshData();
+      }, 6000);
+      return () => clearInterval(interval);
     }
   }, [isAuthenticated, adminTab]);
 
@@ -777,6 +782,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
 
             {/* Export & ZIP Action Buttons */}
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                id="refresh-applications-btn"
+                onClick={refreshData}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition"
+                title="সার্ভার থেকে সব ডিভাইসের সর্বশেষ আবেদন রিলোড করুন"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+                রিলোড (সব ডিভাইস)
+              </button>
+
               <button
                 type="button"
                 id="export-applications-excel-btn"

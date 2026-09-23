@@ -172,6 +172,16 @@ function setupMiddlewares(middlewares: Connect.Server) {
       return;
     }
 
+    // 5.1 POST /api/applications/replace (Full replace for deletions/status updates)
+    if (url === '/api/applications/replace' && req.method === 'POST') {
+      const body = await readBody(req);
+      const incomingApps = Array.isArray(body.applications) ? body.applications : [];
+      writeServerApplications(incomingApps);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, count: incomingApps.length }));
+      return;
+    }
+
     // 6. POST /api/sync-to-sheet
     if (url === '/api/sync-to-sheet' && req.method === 'POST') {
       try {

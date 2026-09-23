@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AdmissionApplication, EligibleStudent, StudyGroup } from '../types';
 import { PhotoUploader } from './PhotoUploader';
 import { SubjectSelector } from './SubjectSelector';
-import { generateTrackingId, getApplications, saveApplications } from '../services/storage';
+import { generateTrackingId, getApplications, saveApplications, saveSingleApplicationToServer } from '../services/storage';
 import { sendApplicationToGoogleSheets, getGoogleSheetsConfig } from '../services/googleSheetsService';
 import { Eye, Send, ArrowLeft, CheckCircle, AlertCircle, Edit3, UserCheck } from 'lucide-react';
 
@@ -183,21 +183,21 @@ export const AdmissionForm: React.FC<AdmissionFormProps> = ({
         editPermissionGiven: false,
       };
 
-      // Live sync to Google Sheets (centralized server sync)
+      // 1. Immediately save application to Central Server database so Admin sees it across all devices
+      await saveSingleApplicationToServer(applicationData);
+
+      // 2. Live sync to Google Sheets (via centralized server proxy)
       try {
         const syncResult = await sendApplicationToGoogleSheets(applicationData);
         if (syncResult.success) {
           applicationData.syncedToGoogleSheets = true;
           applicationData.lastSyncedAt = new Date().toISOString();
+          // Re-update server with sync flags
+          saveSingleApplicationToServer(applicationData).catch(() => {});
         }
       } catch (syncErr) {
         console.warn('Google Sheets live sync notice:', syncErr);
       }
-
-      // Save to storage
-      const filtered = allApps.filter((a) => a.sscRoll !== eligibleStudent.sscRoll);
-      filtered.push(applicationData);
-      saveApplications(filtered);
 
       setShowPreviewModal(false);
       onSubmitted(applicationData);
