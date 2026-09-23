@@ -10,6 +10,12 @@ const STORAGE_KEYS = {
   SHEETS_CONFIG: 'kmdc_google_sheets_config_v1',
 };
 
+export const DEFAULT_GOOGLE_SHEETS_CONFIG: GoogleSheetsConfig = {
+  webhookUrl: 'https://script.google.com/macros/s/AKfycbwxoQADkBVy3OWVBFDzPK1RJ1CIUgi5Kb3anrxNskfMmBaZb_mvhlvEoAMAuE1tEl4ytg/exec',
+  sheetUrl: 'https://docs.google.com/spreadsheets/d/1fTCjwZmqwK79w-_NkjZXHTTpQMstlvZ42nrzFMaZLfM/edit',
+  autoSync: true,
+};
+
 // In-memory cache for fast access
 let inMemoryConfig: GoogleSheetsConfig | null = null;
 
@@ -17,24 +23,22 @@ let inMemoryConfig: GoogleSheetsConfig | null = null;
  * Get config from memory / localStorage (synchronous)
  */
 export function getGoogleSheetsConfig(): GoogleSheetsConfig {
-  if (inMemoryConfig) {
+  if (inMemoryConfig && inMemoryConfig.webhookUrl) {
     return inMemoryConfig;
   }
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SHEETS_CONFIG);
     if (data) {
       const parsed = JSON.parse(data);
-      inMemoryConfig = parsed;
-      return parsed;
+      if (parsed && parsed.webhookUrl) {
+        inMemoryConfig = parsed;
+        return parsed;
+      }
     }
   } catch (err) {
     console.error('Failed to parse Google Sheets config:', err);
   }
-  return {
-    webhookUrl: '',
-    sheetUrl: '',
-    autoSync: true,
-  };
+  return DEFAULT_GOOGLE_SHEETS_CONFIG;
 }
 
 /**
@@ -42,7 +46,7 @@ export function getGoogleSheetsConfig(): GoogleSheetsConfig {
  * If server is empty but current device has a local webhook URL, automatically upload to server!
  */
 export async function fetchServerSheetsConfig(): Promise<GoogleSheetsConfig> {
-  const localConfig = getGoogleSheetsConfig();
+  const currentConfig = getGoogleSheetsConfig();
   try {
     const res = await fetch('/api/sheets-config');
     if (res.ok) {
@@ -52,26 +56,12 @@ export async function fetchServerSheetsConfig(): Promise<GoogleSheetsConfig> {
         saveGoogleSheetsConfig(json.config, false);
         inMemoryConfig = json.config;
         return json.config;
-      } else if (localConfig.webhookUrl) {
-        // Server is missing the webhook URL, but this device has it!
-        // Immediately sync local config up to the central server so all other devices receive it!
-        try {
-          await fetch('/api/sheets-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(localConfig),
-          });
-          console.log('Successfully synced local Google Sheets config to central server.');
-        } catch (uploadErr) {
-          console.warn('Could not auto-upload local config to server:', uploadErr);
-        }
-        return localConfig;
       }
     }
   } catch (err) {
-    console.warn('Could not fetch server sheets config, using local cache:', err);
+    console.warn('Could not fetch server sheets config, using current:', err);
   }
-  return localConfig;
+  return currentConfig.webhookUrl ? currentConfig : DEFAULT_GOOGLE_SHEETS_CONFIG;
 }
 
 /**
@@ -382,7 +372,7 @@ export async function sendApplicationToGoogleSheets(
     config = await fetchServerSheetsConfig();
   }
 
-  const targetUrl = (webhookUrlOverride || config.webhookUrl || '').trim();
+  const targetUrl = (webhookUrlOverride || config.webhookUrl || DEFAULT_GOOGLE_SHEETS_CONFIG.webhookUrl).trim();
 
   // 1. First attempt: Use central server proxy (/api/sync-to-sheet)
   // This completely bypasses browser CORS restrictions, works across devices, and transmits photoBase64

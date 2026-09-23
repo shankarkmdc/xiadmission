@@ -97,16 +97,40 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
   const [uploadFeedback, setUploadFeedback] = useState<{ success?: string; error?: string } | null>(null);
   const [isZipping, setIsZipping] = useState<boolean>(false);
   const [syncingAppId, setSyncingAppId] = useState<string | null>(null);
+  const [isReloading, setIsReloading] = useState<boolean>(false);
+  const [reloadNotice, setReloadNotice] = useState<{ message: string; type: 'success' | 'warning' } | null>(null);
 
   // Reload data
-  const refreshData = async () => {
+  const refreshData = async (isManual = false) => {
+    if (isManual) {
+      setIsReloading(true);
+      setReloadNotice(null);
+    }
     try {
       const serverApps = await fetchServerApplications();
       setApplications(serverApps);
+      if (isManual) {
+        setReloadNotice({
+          message: `সার্ভার থেকে সফলভাবে রিলোড হয়েছে। মোট আবেদন: ${serverApps.length} টি। (সময়: ${new Date().toLocaleTimeString('bn-BD')})`,
+          type: 'success',
+        });
+      }
     } catch {
-      setApplications(getApplications());
+      const local = getApplications();
+      setApplications(local);
+      if (isManual) {
+        setReloadNotice({
+          message: `সার্ভারে সংযোগ হয়নি। এই ডিভাইসের মেমোরি থেকে ${local.length} টি আবেদন প্রদর্শিত হচ্ছে।`,
+          type: 'warning',
+        });
+      }
+    } finally {
+      setEligibleStudents(getEligibleStudents());
+      if (isManual) {
+        setTimeout(() => setIsReloading(false), 500);
+        setTimeout(() => setReloadNotice(null), 5000);
+      }
     }
-    setEligibleStudents(getEligibleStudents());
   };
 
   React.useEffect(() => {
@@ -785,12 +809,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
               <button
                 type="button"
                 id="refresh-applications-btn"
-                onClick={refreshData}
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition"
+                onClick={() => refreshData(true)}
+                disabled={isReloading}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition shadow-xs ${
+                  isReloading
+                    ? 'bg-emerald-100 text-emerald-800 cursor-wait'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
+                }`}
                 title="সার্ভার থেকে সব ডিভাইসের সর্বশেষ আবেদন রিলোড করুন"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
-                রিলোড (সব ডিভাইস)
+                <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+                <span>{isReloading ? 'রিলোড হচ্ছে...' : 'রিলোড (সব ডিভাইস)'}</span>
               </button>
 
               <button
@@ -828,6 +857,33 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
               </button>
             </div>
           </div>
+
+          {/* Reload Status Notice */}
+          {reloadNotice && (
+            <div
+              className={`p-3.5 rounded-xl text-xs font-bold flex items-center justify-between gap-3 shadow-xs transition-all ${
+                reloadNotice.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-300'
+                  : 'bg-amber-50 text-amber-900 border border-amber-300'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {reloadNotice.type === 'success' ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                )}
+                <span>{reloadNotice.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReloadNotice(null)}
+                className="text-slate-400 hover:text-slate-700 text-xs px-2 py-0.5 rounded hover:bg-slate-200/60"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {/* Applications Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">

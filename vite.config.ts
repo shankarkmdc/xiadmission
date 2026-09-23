@@ -14,17 +14,21 @@ if (!fs.existsSync(DATA_DIR)) {
 const CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
 const APPLICATIONS_FILE = path.join(DATA_DIR, 'applications.json');
 
+const ACTIVE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwxoQADkBVy3OWVBFDzPK1RJ1CIUgi5Kb3anrxNskfMmBaZb_mvhlvEoAMAuE1tEl4ytg/exec';
+const ACTIVE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1fTCjwZmqwK79w-_NkjZXHTTpQMstlvZ42nrzFMaZLfM/edit';
+
 function readServerSheetsConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      if (cfg && cfg.webhookUrl) return cfg;
     }
   } catch (err) {
     console.error('Error reading sheets config:', err);
   }
   return {
-    webhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || '',
-    sheetUrl: process.env.GOOGLE_SHEETS_SPREADSHEET_URL || '',
+    webhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || ACTIVE_WEBHOOK_URL,
+    sheetUrl: process.env.GOOGLE_SHEETS_SPREADSHEET_URL || ACTIVE_SPREADSHEET_URL,
     autoSync: true,
   };
 }
@@ -76,19 +80,37 @@ function upsertServerApplication(app: any) {
 
 // Helper to read JSON body
 function readBody(req: any): Promise<any> {
+  if (req.body && typeof req.body === 'object') {
+    return Promise.resolve(req.body);
+  }
+  if (req.readableEnded) {
+    return Promise.resolve({});
+  }
   return new Promise((resolve, reject) => {
     let body = '';
+    const timer = setTimeout(() => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        resolve({});
+      }
+    }, 1500);
+
     req.on('data', (chunk: any) => {
       body += chunk;
     });
     req.on('end', () => {
+      clearTimeout(timer);
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch (e) {
         resolve({});
       }
     });
-    req.on('error', reject);
+    req.on('error', (err: any) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -368,7 +390,7 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss(), googleSheetsApiPlugin()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(process.cwd(), '.'),
       },
     },
     server: {

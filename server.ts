@@ -7,10 +7,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// Enable CORS for cross-device requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Persistent server config file for Google Sheets webhook & applications
 const DATA_DIR = path.join(process.cwd(), '.kmdc_data');
@@ -20,17 +31,21 @@ if (!fs.existsSync(DATA_DIR)) {
 const CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
 const APPLICATIONS_FILE = path.join(DATA_DIR, 'applications.json');
 
+const ACTIVE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwxoQADkBVy3OWVBFDzPK1RJ1CIUgi5Kb3anrxNskfMmBaZb_mvhlvEoAMAuE1tEl4ytg/exec';
+const ACTIVE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/1fTCjwZmqwK79w-_NkjZXHTTpQMstlvZ42nrzFMaZLfM/edit';
+
 function readServerSheetsConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      if (cfg && cfg.webhookUrl) return cfg;
     }
   } catch (err) {
     console.error('Error reading sheets config:', err);
   }
   return {
-    webhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || '',
-    sheetUrl: process.env.GOOGLE_SHEETS_SPREADSHEET_URL || '',
+    webhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || ACTIVE_WEBHOOK_URL,
+    sheetUrl: process.env.GOOGLE_SHEETS_SPREADSHEET_URL || ACTIVE_SPREADSHEET_URL,
     autoSync: true,
   };
 }
@@ -171,6 +186,9 @@ app.post('/api/sync-to-sheet', async (req, res) => {
         message: 'Application payload is missing.',
       });
     }
+
+    // Always ensure application is recorded in central database as well
+    upsertServerApplication(application);
 
     const payload = {
       action: 'SAVE_APPLICATION',
