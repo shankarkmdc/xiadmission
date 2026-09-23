@@ -68,7 +68,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
   // Filter & Search States
   const [appSearch, setAppSearch] = useState<string>('');
   const [appGroupFilter, setAppGroupFilter] = useState<string>('ALL');
-  const [appYearFilter, setAppYearFilter] = useState<string>('2026-2027');
+  const [appYearFilter, setAppYearFilter] = useState<string>('ALL');
   const [appStatusFilter, setAppStatusFilter] = useState<string>('ALL');
 
   const [elSearch, setElSearch] = useState<string>('');

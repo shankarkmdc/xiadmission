@@ -696,6 +696,12 @@ export const AdmissionForm: React.FC<AdmissionFormProps> = ({
             </div>
 
             {/* Modal Footer */}
+            {validationError && (
+              <div className="px-6 py-2 bg-rose-50 border-t border-rose-200 text-rose-700 text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{validationError}</span>
+              </div>
+            )}
             <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
               <button
                 type="button"
