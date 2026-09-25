@@ -16,6 +16,7 @@ import {
 import {
   getGoogleSheetsConfig,
   sendApplicationToGoogleSheets,
+  syncApplicationsFromGoogleSheets,
 } from '../services/googleSheetsService';
 import { GoogleSheetsSyncPanel } from './GoogleSheetsSyncPanel';
 import { EDUCATION_BOARDS, PASSING_YEARS } from '../constants/collegeData';
@@ -45,6 +46,7 @@ import {
   Filter,
   ExternalLink,
   Printer,
+  ClipboardPaste,
 } from 'lucide-react';
 
 interface AdminPortalProps {
@@ -94,24 +96,54 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
 
   // 5. File upload reference
   const fileUploadRef = useRef<HTMLInputElement>(null);
+  const sheetImportRef = useRef<HTMLInputElement>(null);
   const [uploadFeedback, setUploadFeedback] = useState<{ success?: string; error?: string } | null>(null);
   const [isZipping, setIsZipping] = useState<boolean>(false);
   const [syncingAppId, setSyncingAppId] = useState<string | null>(null);
   const [isReloading, setIsReloading] = useState<boolean>(false);
   const [reloadNotice, setReloadNotice] = useState<{ message: string; type: 'success' | 'warning' } | null>(null);
+  const [isImportingSheet, setIsImportingSheet] = useState<boolean>(false);
+  const [sheetImportNotice, setSheetImportNotice] = useState<{ message: string; count: number; type: 'success' | 'error' } | null>(null);
+  const [showPasteModal, setShowPasteModal] = useState<boolean>(false);
+  const [pasteText, setPasteText] = useState<string>('');
 
-  // Reload data
+  // Reload data with automatic Google Sheets & Server sync
   const refreshData = async (isManual = false) => {
     if (isManual) {
       setIsReloading(true);
       setReloadNotice(null);
     }
     try {
+      // 1. Fetch server applications
       const serverApps = await fetchServerApplications();
-      setApplications(serverApps);
+
+      // 2. Query Google Sheets directly (pulls live submissions from other devices without uploading or pasting)
+      let finalApps = serverApps;
+      try {
+        const sheetRes = await syncApplicationsFromGoogleSheets();
+        if (sheetRes.success && sheetRes.applications.length > 0) {
+          const appMap = new Map<string, AdmissionApplication>();
+          serverApps.forEach((a) => {
+            if (a.sscRoll) appMap.set(String(a.sscRoll).trim(), a);
+          });
+          sheetRes.applications.forEach((a) => {
+            if (a.sscRoll) {
+              const roll = String(a.sscRoll).trim();
+              const existing = appMap.get(roll);
+              appMap.set(roll, { ...(existing || {}), ...a, syncedToGoogleSheets: true });
+            }
+          });
+          finalApps = Array.from(appMap.values());
+          saveApplications(finalApps);
+        }
+      } catch (sheetErr) {
+        console.warn('Background Google Sheets pull notice:', sheetErr);
+      }
+
+      setApplications(finalApps);
       if (isManual) {
         setReloadNotice({
-          message: `সার্ভার থেকে সফলভাবে রিলোড হয়েছে। মোট আবেদন: ${serverApps.length} টি। (সময়: ${new Date().toLocaleTimeString('bn-BD')})`,
+          message: `গুগল শিট ও সার্ভার থেকে সরাসরি লাইভ সিঙ্ক সম্পন্ন হয়েছে। মোট আবেদন: ${finalApps.length} টি। (সময়: ${new Date().toLocaleTimeString('bn-BD')})`,
           type: 'success',
         });
       }
@@ -474,6 +506,330 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
     reader.readAsBinaryString(file);
   };
 
+  // Helper to parse application rows from Google Sheet or Excel
+  const parseApplicationRows = (rows: any[][]): AdmissionApplication[] => {
+    if (!rows || rows.length < 2) return [];
+
+    const headerRow = rows[0].map((h) => String(h || '').trim().toLowerCase());
+
+    const findCol = (...keywords: string[]): number => {
+      for (const kw of keywords) {
+        const lkw = kw.toLowerCase();
+        const idx = headerRow.findIndex((h) => h.includes(lkw));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+
+    const colRoll = findCol('এসএসসি রোল', 'ssc roll', 'ssc_roll', 'roll', 'রোল');
+    const colTracking = findCol('ট্র্যাকিং আইডি', 'tracking', 'tracking_id', 'id');
+    const colNameBn = findCol('শিক্ষার্থীর নাম (বাংলা)', 'শিক্ষার্থীর নাম', 'নাম (বাংলা)', 'name_bn');
+    const colNameEn = findCol('শিক্ষার্থীর নাম (english)', 'নাম (english)', 'name_en', 'student_name_en');
+    const colGroup = findCol('বিভাগ', 'group', 'শাখা');
+    const colGpa = findCol('প্রাপ্ত gpa', 'gpa', 'পয়েন্ট', 'জিপিএ');
+    const colReg = findCol('রেজিস্ট্রেশন', 'reg', 'registration');
+    const colBoard = findCol('বোর্ড', 'board');
+    const colYear = findCol('পাসের সন', 'পাস সন', 'passing_year', 'year');
+    const colMobile = findCol('শিক্ষার্থীর মোবাইল', 'মোবাইল', 'mobile', 'phone');
+    const colPhoto = findCol('ড্রাইভ লিংক', 'ছবির ড্রাইভ', 'photo', 'ছবি', 'drive');
+    const colStatus = findCol('ভর্তির স্ট্যাটাস', 'স্ট্যাটাস', 'status');
+    const colClassRoll = findCol('শ্রেণি রোল', 'ক্লাস রোল', 'class roll', 'class_roll');
+    const colFatherBn = findCol('পিতার নাম (বাংলা)', 'পিতার নাম', 'father_name_bn');
+    const colFatherEn = findCol('পিতার নাম (english)', 'father_name_en');
+    const colFatherMob = findCol('পিতার মোবাইল', 'father_mobile');
+    const colMotherBn = findCol('মাতার নাম (বাংলা)', 'মাতার নাম', 'mother_name_bn');
+    const colMotherEn = findCol('মাতার নাম (english)', 'mother_name_en');
+    const colMotherMob = findCol('মাতার মোবাইল', 'mother_mobile');
+    const colPresentAddr = findCol('বর্তমান ঠিকানা', 'present_address');
+    const colPermAddr = findCol('স্থায়ী ঠিকানা', 'permanent_address');
+    const colComp = findCol('বাধ্যতামূলক', 'compulsory');
+    const colEl4 = findCol('৪র্থ বিষয়', 'elective 4', '৪র্থ');
+    const colEl5 = findCol('৫ম বিষয়', 'elective 5', '৫ম');
+    const colEl6 = findCol('৬ষ্ঠ বিষয়', 'elective 6', '৬ষ্ঠ');
+    const colOp7 = findCol('৭ম বিষয়', 'optional 7', '৭ম', 'ঐচ্ছিক');
+    const colSubDate = findCol('আবেদন দাখিলের সময়', 'দাখিল', 'submitted_at');
+
+    const parsedApps: AdmissionApplication[] = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r.length === 0) continue;
+
+      const sscRoll = String(
+        (colRoll >= 0 ? r[colRoll] : '') ||
+        (colTracking >= 0 ? r[colTracking] : '') ||
+        r[8] ||
+        r[0] ||
+        ''
+      ).trim();
+
+      if (!sscRoll || sscRoll === 'এসএসসি রোল' || sscRoll.toLowerCase() === 'ssc roll' || sscRoll === 'ক্রমিক') continue;
+
+      const trackingId = String(
+        (colTracking >= 0 ? r[colTracking] : '') ||
+        r[3] ||
+        `KMDC-2026-${String(i).padStart(3, '0')}`
+      ).trim();
+
+      const studentNameBn = String(
+        (colNameBn >= 0 ? r[colNameBn] : '') ||
+        r[13] ||
+        'শিক্ষার্থী'
+      ).trim();
+
+      const studentNameEn = String(
+        (colNameEn >= 0 ? r[colNameEn] : '') ||
+        r[14] ||
+        'STUDENT'
+      ).trim().toUpperCase();
+
+      const groupRaw = String((colGroup >= 0 ? r[colGroup] : '') || r[6] || 'HUMANITIES').toUpperCase();
+      let group: StudyGroup = 'HUMANITIES';
+      if (groupRaw.includes('SCI') || groupRaw.includes('বিজ্ঞান')) group = 'SCIENCE';
+      else if (groupRaw.includes('BUS') || groupRaw.includes('ব্যবসা') || groupRaw.includes('বাণিজ্য')) group = 'BUSINESS STUDIES';
+
+      const gpa = String((colGpa >= 0 ? r[colGpa] : '') || r[12] || '5.00').trim();
+      const sscReg = String((colReg >= 0 ? r[colReg] : '') || r[9] || '').trim();
+      const sscBoard = String((colBoard >= 0 ? r[colBoard] : '') || r[10] || 'COMILLA').trim();
+      const passingYear = String((colYear >= 0 ? r[colYear] : '') || r[11] || '2026').trim();
+      const studentMobile = String((colMobile >= 0 ? r[colMobile] : '') || r[15] || '').trim();
+      const photoDriveUrl = String((colPhoto >= 0 ? r[colPhoto] : '') || r[2] || '').trim();
+
+      const rawStatus = String((colStatus >= 0 ? r[colStatus] : '') || r[5] || '').trim();
+      let status: AdmissionApplication['status'] = 'SUBMITTED';
+      if (rawStatus.includes('গৃহীত') || rawStatus.toUpperCase().includes('ACCEPTED')) status = 'ACCEPTED';
+      else if (rawStatus.includes('অনুমোদিত') || rawStatus.toUpperCase().includes('EDIT')) status = 'EDIT_PERMITTED';
+
+      const classRoll = String((colClassRoll >= 0 ? r[colClassRoll] : '') || r[4] || '').replace('Not Allocated', '').trim();
+
+      const compStr = String((colComp >= 0 ? r[colComp] : '') || r[24] || '');
+      const compulsorySubjects = compStr
+        ? compStr.split(',').map((s) => s.trim()).filter(Boolean)
+        : ['বাংলা', 'ইংরেজি', 'তথ্য ও যোগাযোগ প্রযুক্তি'];
+
+      const app: AdmissionApplication = {
+        id: `app_${sscRoll}`,
+        trackingId,
+        classRoll,
+        status,
+        group,
+        academicYear: '2026-2027',
+        sscRoll,
+        sscReg,
+        sscBoard,
+        passingYear,
+        gpa: isNaN(parseFloat(gpa)) ? '5.00' : parseFloat(gpa).toFixed(2),
+        studentNameBn,
+        studentNameEn,
+        studentMobile,
+        photoBase64: photoDriveUrl,
+        fatherNameBn: String((colFatherBn >= 0 ? r[colFatherBn] : '') || r[16] || '').trim(),
+        fatherNameEn: String((colFatherEn >= 0 ? r[colFatherEn] : '') || r[17] || '').trim(),
+        fatherMobile: String((colFatherMob >= 0 ? r[colFatherMob] : '') || r[18] || '').trim(),
+        motherNameBn: String((colMotherBn >= 0 ? r[colMotherBn] : '') || r[19] || '').trim(),
+        motherNameEn: String((colMotherEn >= 0 ? r[colMotherEn] : '') || r[20] || '').trim(),
+        motherMobile: String((colMotherMob >= 0 ? r[colMotherMob] : '') || r[21] || '').trim(),
+        presentAddress: String((colPresentAddr >= 0 ? r[colPresentAddr] : '') || r[22] || '').trim(),
+        permanentAddress: String((colPermAddr >= 0 ? r[colPermAddr] : '') || r[23] || '').trim(),
+        compulsorySubjects,
+        electiveSubject4: String((colEl4 >= 0 ? r[colEl4] : '') || r[25] || '').trim(),
+        electiveSubject5: String((colEl5 >= 0 ? r[colEl5] : '') || r[26] || '').trim(),
+        electiveSubject6: String((colEl6 >= 0 ? r[colEl6] : '') || r[27] || '').trim(),
+        optionalSubject7: String((colOp7 >= 0 ? r[colOp7] : '') || r[28] || '').trim(),
+        submittedAt: String((colSubDate >= 0 ? r[colSubDate] : '') || r[29] || new Date().toISOString()),
+        updatedAt: new Date().toISOString(),
+        syncedToGoogleSheets: true,
+      };
+
+      parsedApps.push(app);
+    }
+
+    return parsedApps;
+  };
+
+  // Import Applications from Google Sheet (.xlsx / .csv)
+  const handleImportApplicationsFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImportingSheet(true);
+    setSheetImportNotice(null);
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = event.target?.result;
+        const workbook = XLSX.read(data, { type: 'binary' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        if (!rows || rows.length < 2) {
+          setSheetImportNotice({
+            message: 'ফাইলে কোনো শিক্ষার্থীর তথ্য পাওয়া যায়নি। অনুগ্রহ করে গুগল শিট থেকে ডাউনলোড করা ফাইল আপলোড করুন।',
+            count: 0,
+            type: 'error',
+          });
+          setIsImportingSheet(false);
+          return;
+        }
+
+        const parsedApps = parseApplicationRows(rows);
+
+        if (parsedApps.length === 0) {
+          setSheetImportNotice({
+            message: 'কোনো বৈধ আবেদন সনাক্ত করা যায়নি। অনুগ্রহ করে ফাইলটি যাচাই করুন।',
+            count: 0,
+            type: 'error',
+          });
+          setIsImportingSheet(false);
+          return;
+        }
+
+        // Merge with existing applications
+        const existing = getApplications();
+        const appMap = new Map<string, AdmissionApplication>();
+        existing.forEach((a) => appMap.set(a.sscRoll.trim(), a));
+        parsedApps.forEach((a) => {
+          const current = appMap.get(a.sscRoll.trim());
+          if (current) {
+            appMap.set(a.sscRoll.trim(), {
+              ...current,
+              ...a,
+              status: (a.status === 'ACCEPTED' ? 'ACCEPTED' : current.status) || 'SUBMITTED',
+              classRoll: a.classRoll || current.classRoll || '',
+            });
+          } else {
+            appMap.set(a.sscRoll.trim(), a);
+          }
+        });
+
+        const merged = Array.from(appMap.values());
+        saveApplications(merged);
+        setApplications(merged);
+
+        // Bulk push to server
+        try {
+          await fetch('/api/applications/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ applications: merged }),
+          });
+        } catch (err) {
+          console.warn('Bulk push error:', err);
+        }
+
+        setSheetImportNotice({
+          message: `অভিনন্দন! সফলভাবে ${parsedApps.length} টি আবেদন গুগল শিট ফাইল থেকে এডমিন প্যানেলে ইমপোর্ট হয়েছে। মোট আবেদন: ${merged.length} টি।`,
+          count: parsedApps.length,
+          type: 'success',
+        });
+      } catch (err: any) {
+        console.error('File import error:', err);
+        setSheetImportNotice({
+          message: `ফাইল রিড করতে সমস্যা হয়েছে: ${err?.message || 'অজানা ত্রুটি'}`,
+          count: 0,
+          type: 'error',
+        });
+      } finally {
+        setIsImportingSheet(false);
+        if (e.target) e.target.value = '';
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  // Process pasted rows from Google Sheets
+  const handleProcessPastedRows = async () => {
+    if (!pasteText.trim()) return;
+
+    try {
+      const rawLines = pasteText.trim().split('\n').filter((l) => l.trim().length > 0);
+      const rows: string[][] = rawLines.map((line) => line.split('\t'));
+
+      if (rows.length === 0) return;
+
+      const firstRowStr = rows[0].join(' ').toLowerCase();
+      let tableRows = rows;
+      if (
+        !firstRowStr.includes('রোল') &&
+        !firstRowStr.includes('roll') &&
+        !firstRowStr.includes('ট্র্যাকিং') &&
+        !firstRowStr.includes('নাম')
+      ) {
+        const standardHeader = [
+          'ক্রমিক', 'ছবি', 'ড্রাইভ লিংক', 'ট্র্যাকিং আইডি', 'শ্রেণি রোল', 'ভর্তির স্ট্যাটাস',
+          'বিভাগ', 'শিক্ষাবর্ষ', 'এসএসসি রোল', 'রেজিস্ট্রেশন নম্বর', 'শিক্ষা বোর্ড', 'পাসের সন',
+          'প্রাপ্ত GPA', 'শিক্ষার্থীর নাম (বাংলা)', 'শিক্ষার্থীর নাম (English)', 'শিক্ষার্থীর মোবাইল',
+          'পিতার নাম (বাংলা)', 'পিতার নাম (English)', 'পিতার মোবাইল', 'মাতার নাম (বাংলা)',
+          'মাতার নাম (English)', 'মাতার মোবাইল', 'বর্তমান ঠিকানা', 'স্থায়ী ঠিকানা', 'বাধ্যতামূলক বিষয়',
+          '৪র্থ বিষয়', '৫ম বিষয়', '৬ষ্ঠ বিষয়', '৭ম বিষয়', 'দাখিলের সময়', 'সিঙ্ক সময়',
+        ];
+        tableRows = [standardHeader, ...rows];
+      }
+
+      const parsed = parseApplicationRows(tableRows);
+      if (parsed.length === 0) {
+        setSheetImportNotice({
+          message: 'পেস্ট করা তথ্য থেকে কোনো আবেদন সনাক্ত করা যায়নি। অনুগ্রহ করে গুগল শিটের সম্পূর্ণ সারি কপি করুন।',
+          count: 0,
+          type: 'error',
+        });
+        setShowPasteModal(false);
+        return;
+      }
+
+      // Merge with existing
+      const existing = getApplications();
+      const appMap = new Map<string, AdmissionApplication>();
+      existing.forEach((a) => appMap.set(a.sscRoll.trim(), a));
+      parsed.forEach((a) => {
+        const current = appMap.get(a.sscRoll.trim());
+        if (current) {
+          appMap.set(a.sscRoll.trim(), {
+            ...current,
+            ...a,
+            status: (a.status === 'ACCEPTED' ? 'ACCEPTED' : current.status) || 'SUBMITTED',
+            classRoll: a.classRoll || current.classRoll || '',
+          });
+        } else {
+          appMap.set(a.sscRoll.trim(), a);
+        }
+      });
+
+      const merged = Array.from(appMap.values());
+      saveApplications(merged);
+      setApplications(merged);
+
+      try {
+        await fetch('/api/applications/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applications: merged }),
+        });
+      } catch (err) {
+        console.warn('Bulk push error:', err);
+      }
+
+      setShowPasteModal(false);
+      setPasteText('');
+      setSheetImportNotice({
+        message: `অভিনন্দন! সফলভাবে ${parsed.length} টি আবেদন গুগল শিট থেকে ইমপোর্ট সম্পন্ন হয়েছে। মোট আবেদন: ${merged.length} টি।`,
+        count: parsed.length,
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.error(err);
+      setSheetImportNotice({
+        message: `পেস্ট করা তথ্য প্রসেস করতে ব্যর্থ হয়েছে: ${err?.message || 'ভুল ফরম্যাট'}`,
+        count: 0,
+        type: 'error',
+      });
+      setShowPasteModal(false);
+    }
+  };
+
   // Export filtered applications to Excel
   const handleExportApplications = (format: 'xlsx' | 'csv') => {
     const filtered = getFilteredApplications();
@@ -806,20 +1162,58 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
 
             {/* Export & ZIP Action Buttons */}
             <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                ref={sheetImportRef}
+                onChange={handleImportApplicationsFile}
+                accept=".xlsx, .xls, .csv"
+                className="hidden"
+              />
+
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  লাইভ অটো-সিঙ্ক সক্রিয়
+                </span>
+
+                <button
+                  type="button"
+                  id="refresh-applications-btn"
+                  onClick={() => refreshData(true)}
+                  disabled={isReloading}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition shadow-xs ${
+                    isReloading
+                      ? 'bg-emerald-100 text-emerald-800 cursor-wait'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
+                  }`}
+                  title="গুগল শিট ও সার্ভার থেকে সব ডিভাইসের সর্বশেষ আবেদন সাথে সাথে সিঙ্ক করুন"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+                  <span>{isReloading ? 'সিঙ্ক হচ্ছে...' : 'গুগল শিট লাইভ সিঙ্ক'}</span>
+                </button>
+              </div>
+
               <button
                 type="button"
-                id="refresh-applications-btn"
-                onClick={() => refreshData(true)}
-                disabled={isReloading}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition shadow-xs ${
-                  isReloading
-                    ? 'bg-emerald-100 text-emerald-800 cursor-wait'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
-                }`}
-                title="সার্ভার থেকে সব ডিভাইসের সর্বশেষ আবেদন রিলোড করুন"
+                id="import-sheet-file-btn"
+                onClick={() => sheetImportRef.current?.click()}
+                disabled={isImportingSheet}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                title="গুগল শিট থেকে ডাউনলোডকৃত Excel বা CSV ফাইল আপলোড করে এক ক্লিকে সকল আবেদন লোড করুন"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
-                <span>{isReloading ? 'রিলোড হচ্ছে...' : 'রিলোড (সব ডিভাইস)'}</span>
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>{isImportingSheet ? 'ইমপোর্ট হচ্ছে...' : 'গুগল শিট ফাইল ইমপোর্ট'}</span>
+              </button>
+
+              <button
+                type="button"
+                id="paste-sheet-data-btn"
+                onClick={() => setShowPasteModal(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                title="গুগল শিটের সারিগুলো কপি করে সরাসরি পেস্ট করুন"
+              >
+                <ClipboardPaste className="w-4 h-4" />
+                <span>শিট ডাটা পেস্ট করুন</span>
               </button>
 
               <button
@@ -837,7 +1231,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
                 type="button"
                 id="export-applications-csv-btn"
                 onClick={() => handleExportApplications('csv')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition"
                 title="CSV এ ডাউনলোড করুন"
               >
                 <Download className="w-4 h-4" />
@@ -857,6 +1251,33 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
               </button>
             </div>
           </div>
+
+          {/* Sheet Import Notification Banner */}
+          {sheetImportNotice && (
+            <div
+              className={`p-3.5 rounded-xl text-xs font-bold flex items-center justify-between gap-3 shadow-xs transition-all ${
+                sheetImportNotice.type === 'success'
+                  ? 'bg-indigo-50 text-indigo-900 border border-indigo-300'
+                  : 'bg-rose-50 text-rose-900 border border-rose-300'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {sheetImportNotice.type === 'success' ? (
+                  <CheckCircle className="w-4 h-4 text-indigo-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{sheetImportNotice.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSheetImportNotice(null)}
+                className="text-slate-400 hover:text-slate-700 text-xs px-2 py-0.5 rounded hover:bg-slate-200/60"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {/* Reload Status Notice */}
           {reloadNotice && (
@@ -1731,6 +2152,81 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onViewApplication }) =
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Google Sheet Quick Paste Modal */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center">
+                  <ClipboardPaste className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">গুগল শিটের সারি পেস্ট করে ইমপোর্ট করুন</h3>
+                  <p className="text-xs text-slate-500">গুগল শিট থেকে কপি করা তথ্য সরাসরি এখানে পেস্ট করুন</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPasteModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 leading-relaxed">
+              <span className="font-bold">কীভাবে করবেন?</span>
+              <ol className="list-decimal list-inside mt-1 space-y-0.5 text-amber-800">
+                <li>আপনার <strong>Google Sheet</strong> ট্যাবে যান।</li>
+                <li>নতুন যে আবেদনগুলো এডমিন প্যানেলে যুক্ত করতে চান, সেই সারিগুলো সিলেক্ট করে কপি <strong>(Ctrl + C)</strong> করুন।</li>
+                <li>নিচের বক্সে পেস্ট <strong>(Ctrl + V)</strong> করে <strong>&quot;ইমপোর্ট করুন&quot;</strong> বাটনে ক্লিক করুন।</li>
+              </ol>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-700">
+                গুগল শিটের কপি করা ডাটা (TSV / Tab-delimited):
+              </label>
+              <textarea
+                rows={8}
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder="এখানে পেস্ট করুন... (যেমন: 1  KMDC-2026-001  168399  আলা আমিন  HUMANITIES  5.00...)"
+                className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-4 mt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPasteText('')}
+                className="text-xs text-slate-500 hover:text-slate-800 underline"
+              >
+                টেক্সট ক্লিয়ার করুন
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPasteModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProcessPastedRows}
+                  disabled={!pasteText.trim()}
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm transition"
+                >
+                  ইমপোর্ট করুন
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

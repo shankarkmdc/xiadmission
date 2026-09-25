@@ -357,6 +357,28 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  var action = (e && e.parameter && e.parameter.action) || '';
+  
+  // Real-time bidirectional sync: return all sheet rows directly to Admin Portal across any device
+  if (action === 'GET_APPLICATIONS' || action === 'FETCH' || action === 'SYNC' || action === 'READ_ALL') {
+    try {
+      var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+      var sheet = spreadsheet.getActiveSheet();
+      var values = sheet.getDataRange().getValues();
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        count: Math.max(0, values.length - 1),
+        rows: values,
+        timestamp: new Date().toISOString()
+      })).setMimeType(ContentService.MimeType.JSON);
+    } catch(err) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'error',
+        message: err.toString()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  
   return ContentService.createTextOutput("KMDC Online Admission Google Sheets Webhook is active and running!");
 }`;
 
@@ -526,4 +548,222 @@ export async function testGoogleSheetsWebhook(
       message: `টেস্ট করতে সমস্যা হয়েছে: ${errMsg}`,
     };
   }
+}
+
+/**
+ * Robust parser converting Google Sheet rows (from Apps Script or CSV) into typed AdmissionApplication objects
+ */
+export function parseApplicationRows(rows: any[][]): AdmissionApplication[] {
+  if (!rows || rows.length < 2) return [];
+
+  const headers = rows[0].map((h: any) => String(h || '').trim().toLowerCase());
+
+  const findCol = (...names: string[]) => {
+    return headers.findIndex((h: string) => names.some((n) => h.includes(n.toLowerCase())));
+  };
+
+  const colRoll = findCol('এসএসসি রোল', 'ssc roll', 'ssc_roll', 'রোল');
+  const colTracking = findCol('ট্র্যাকিং আইডি', 'tracking', 'tracking_id', 'আইডি');
+  const colNameBn = findCol('শিক্ষার্থীর নাম (বাংলা)', 'শিক্ষার্থীর নাম', 'নাম (বাংলা)', 'name_bn');
+  const colNameEn = findCol('শিক্ষার্থীর নাম (english)', 'নাম (english)', 'name_en', 'student_name_en');
+  const colGroup = findCol('বিভাগ', 'group', 'শাখা');
+  const colGpa = findCol('প্রাপ্ত gpa', 'gpa', 'পয়েন্ট', 'জিপিএ');
+  const colReg = findCol('রেজিস্ট্রেশন', 'reg', 'registration');
+  const colBoard = findCol('বোর্ড', 'board');
+  const colYear = findCol('পাসের সন', 'পাস সন', 'passing_year', 'year');
+  const colMobile = findCol('শিক্ষার্থীর মোবাইল', 'মোবাইল', 'mobile', 'phone');
+  const colPhoto = findCol('ড্রাইভ লিংক', 'ছবির ড্রাইভ', 'photo', 'ছবি', 'drive');
+  const colStatus = findCol('ভর্তির স্ট্যাটাস', 'স্ট্যাটাস', 'status');
+  const colClassRoll = findCol('শ্রেণি রোল', 'ক্লাস রোল', 'class roll', 'class_roll');
+  const colFatherBn = findCol('পিতার নাম (বাংলা)', 'পিতার নাম', 'father_name_bn');
+  const colFatherEn = findCol('পিতার নাম (english)', 'father_name_en');
+  const colFatherMob = findCol('পিতার মোবাইল', 'father_mobile');
+  const colMotherBn = findCol('মাতার নাম (বাংলা)', 'মাতার নাম', 'mother_name_bn');
+  const colMotherEn = findCol('মাতার নাম (english)', 'mother_name_en');
+  const colMotherMob = findCol('মাতার মোবাইল', 'mother_mobile');
+  const colPresentAddr = findCol('বর্তমান ঠিকানা', 'present_address');
+  const colPermAddr = findCol('স্থায়ী ঠিকানা', 'permanent_address');
+  const colComp = findCol('বাধ্যতামূলক', 'compulsory');
+  const colEl4 = findCol('৪র্থ বিষয়', 'elective 4', '৪র্থ');
+  const colEl5 = findCol('৫ম বিষয়', 'elective 5', '৫ম');
+  const colEl6 = findCol('৬ষ্ঠ বিষয়', 'elective 6', '৬ষ্ঠ');
+  const colOp7 = findCol('৭ম বিষয়', 'optional 7', '৭ম', 'ঐচ্ছিক');
+  const colSubDate = findCol('আবেদন দাখিলের সময়', 'দাখিল', 'submitted_at');
+
+  const parsedApps: AdmissionApplication[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || r.length === 0) continue;
+
+    const sscRoll = String(
+      (colRoll >= 0 ? r[colRoll] : '') ||
+      (colTracking >= 0 ? r[colTracking] : '') ||
+      r[8] ||
+      r[0] ||
+      ''
+    ).trim();
+
+    if (!sscRoll || sscRoll === 'এসএসসি রোল' || sscRoll.toLowerCase() === 'ssc roll' || sscRoll === 'ক্রমিক') continue;
+
+    const trackingId = String(
+      (colTracking >= 0 ? r[colTracking] : '') ||
+      r[3] ||
+      `KMDC-2026-${String(i).padStart(3, '0')}`
+    ).trim();
+
+    const studentNameBn = String(
+      (colNameBn >= 0 ? r[colNameBn] : '') ||
+      r[13] ||
+      'শিক্ষার্থী'
+    ).trim();
+
+    const studentNameEn = String(
+      (colNameEn >= 0 ? r[colNameEn] : '') ||
+      r[14] ||
+      'STUDENT'
+    ).trim().toUpperCase();
+
+    const groupRaw = String((colGroup >= 0 ? r[colGroup] : '') || r[6] || 'HUMANITIES').toUpperCase();
+    let group: AdmissionApplication['group'] = 'HUMANITIES';
+    if (groupRaw.includes('SCI') || groupRaw.includes('বিজ্ঞান')) group = 'SCIENCE';
+    else if (groupRaw.includes('BUS') || groupRaw.includes('ব্যবসা') || groupRaw.includes('বাণিজ্য')) group = 'BUSINESS STUDIES';
+
+    const gpa = String((colGpa >= 0 ? r[colGpa] : '') || r[12] || '5.00').trim();
+    const sscReg = String((colReg >= 0 ? r[colReg] : '') || r[9] || '').trim();
+    const sscBoard = String((colBoard >= 0 ? r[colBoard] : '') || r[10] || 'COMILLA').trim();
+    const passingYear = String((colYear >= 0 ? r[colYear] : '') || r[11] || '2026').trim();
+    const studentMobile = String((colMobile >= 0 ? r[colMobile] : '') || r[15] || '').trim();
+    const photoDriveUrl = String((colPhoto >= 0 ? r[colPhoto] : '') || r[2] || '').trim();
+
+    const rawStatus = String((colStatus >= 0 ? r[colStatus] : '') || r[5] || '').trim();
+    let status: AdmissionApplication['status'] = 'SUBMITTED';
+    if (rawStatus.includes('গৃহীত') || rawStatus.toUpperCase().includes('ACCEPTED')) status = 'ACCEPTED';
+    else if (rawStatus.includes('অনুমোদিত') || rawStatus.toUpperCase().includes('EDIT')) status = 'EDIT_PERMITTED';
+
+    const classRoll = String((colClassRoll >= 0 ? r[colClassRoll] : '') || r[4] || '').replace('Not Allocated', '').trim();
+
+    const compStr = String((colComp >= 0 ? r[colComp] : '') || r[24] || '');
+    const compulsorySubjects = compStr
+      ? compStr.split(',').map((s) => s.trim()).filter(Boolean)
+      : ['বাংলা', 'ইংরেজি', 'তথ্য ও যোগাযোগ প্রযুক্তি'];
+
+    const app: AdmissionApplication = {
+      id: `app_${sscRoll}`,
+      trackingId,
+      classRoll,
+      status,
+      group,
+      academicYear: '2026-2027',
+      sscRoll,
+      sscReg,
+      sscBoard,
+      passingYear,
+      gpa: isNaN(parseFloat(gpa)) ? '5.00' : parseFloat(gpa).toFixed(2),
+      studentNameBn,
+      studentNameEn,
+      studentMobile,
+      photoBase64: photoDriveUrl,
+      fatherNameBn: String((colFatherBn >= 0 ? r[colFatherBn] : '') || r[16] || '').trim(),
+      fatherNameEn: String((colFatherEn >= 0 ? r[colFatherEn] : '') || r[17] || '').trim().toUpperCase(),
+      fatherMobile: String((colFatherMob >= 0 ? r[colFatherMob] : '') || r[18] || '').trim(),
+      motherNameBn: String((colMotherBn >= 0 ? r[colMotherBn] : '') || r[19] || '').trim(),
+      motherNameEn: String((colMotherEn >= 0 ? r[colMotherEn] : '') || r[20] || '').trim().toUpperCase(),
+      motherMobile: String((colMotherMob >= 0 ? r[colMotherMob] : '') || r[21] || '').trim(),
+      presentAddress: String((colPresentAddr >= 0 ? r[colPresentAddr] : '') || r[22] || '').trim(),
+      permanentAddress: String((colPermAddr >= 0 ? r[colPermAddr] : '') || r[23] || '').trim(),
+      compulsorySubjects,
+      electiveSubject4: String((colEl4 >= 0 ? r[colEl4] : '') || r[25] || '').trim(),
+      electiveSubject5: String((colEl5 >= 0 ? r[colEl5] : '') || r[26] || '').trim(),
+      electiveSubject6: String((colEl6 >= 0 ? r[colEl6] : '') || r[27] || '').trim(),
+      optionalSubject7: String((colOp7 >= 0 ? r[colOp7] : '') || r[28] || '').trim(),
+      submittedAt: String((colSubDate >= 0 ? r[colSubDate] : '') || r[29] || new Date().toISOString()),
+      updatedAt: new Date().toISOString(),
+      syncedToGoogleSheets: true,
+      lastSyncedAt: new Date().toISOString(),
+    };
+
+    parsedApps.push(app);
+  }
+
+  return parsedApps;
+}
+
+/**
+ * Automatically queries Google Sheets Webhook and Server to pull all applications in real time without any upload or paste
+ */
+export async function syncApplicationsFromGoogleSheets(): Promise<{
+  success: boolean;
+  message: string;
+  count: number;
+  applications: AdmissionApplication[];
+}> {
+  // 1. Try server-side live sync endpoint first (bypasses browser CORS & persists to server disk)
+  try {
+    const serverRes = await fetch(`/api/sync-from-sheet?_t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache' },
+    });
+    if (serverRes.ok) {
+      const json = await serverRes.json();
+      if (json.success && Array.isArray(json.applications) && json.applications.length > 0) {
+        return {
+          success: true,
+          message: `সার্ভার ও গুগল শিট থেকে ${json.applications.length} টি আবেদন সফলভাবে সিঙ্ক হয়েছে।`,
+          count: json.applications.length,
+          applications: json.applications,
+        };
+      }
+    }
+  } catch (serverErr) {
+    console.warn('Server sync-from-sheet failed, falling back to direct:', serverErr);
+  }
+
+  // 2. Direct browser GET to Google Apps Script Webhook
+  const config = getGoogleSheetsConfig();
+  const targetUrl = (config.webhookUrl || DEFAULT_GOOGLE_SHEETS_CONFIG.webhookUrl).trim();
+
+  if (targetUrl) {
+    try {
+      const separator = targetUrl.includes('?') ? '&' : '?';
+      const fetchUrl = `${targetUrl}${separator}action=GET_APPLICATIONS&_t=${Date.now()}`;
+
+      const res = await fetch(fetchUrl);
+      if (res.ok) {
+        const text = await res.text();
+        let json: any = null;
+        try {
+          json = JSON.parse(text);
+        } catch {}
+
+        if (json && json.status === 'success' && Array.isArray(json.rows) && json.rows.length > 1) {
+          const parsed = parseApplicationRows(json.rows);
+          if (parsed.length > 0) {
+            // Upload parsed apps to central server so other devices get them
+            fetch('/api/applications/bulk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ applications: parsed }),
+            }).catch(() => {});
+
+            return {
+              success: true,
+              message: `গুগল শিট থেকে সরাসরি ${parsed.length} টি আবেদন লোড করা হয়েছে!`,
+              count: parsed.length,
+              applications: parsed,
+            };
+          }
+        }
+      }
+    } catch (directErr) {
+      console.warn('Direct Apps Script fetch notice:', directErr);
+    }
+  }
+
+  return {
+    success: false,
+    message: 'গুগল শিট থেকে নতুন কোনো আবেদন পাওয়া যায়নি।',
+    count: 0,
+    applications: [],
+  };
 }

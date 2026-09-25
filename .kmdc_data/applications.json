@@ -66,5 +66,38 @@
     "optionalSubject7": "যুক্তিবিদ্যা",
     "submittedAt": "2026-09-23T04:36:00Z",
     "status": "SUBMITTED"
+  },
+  {
+    "id": "app_test_photo",
+    "trackingId": "KMDC-2026-999",
+    "academicYear": "2026-2027",
+    "group": "SCIENCE",
+    "sscRoll": "168999",
+    "sscReg": "1234567899",
+    "sscBoard": "DHAKA",
+    "passingYear": "2026",
+    "gpa": "5.00",
+    "studentNameBn": "টেস্ট শিক্ষার্থী",
+    "studentNameEn": "TEST STUDENT",
+    "studentMobile": "01711111111",
+    "photoBase64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "submittedAt": "2026-09-23T05:00:00Z",
+    "status": "SUBMITTED"
+  },
+  {
+    "id": "app_test_new",
+    "trackingId": "KMDC-2026-777",
+    "academicYear": "2026-2027",
+    "group": "HUMANITIES",
+    "sscRoll": "168777",
+    "sscReg": "1234567877",
+    "sscBoard": "COMILLA",
+    "passingYear": "2026",
+    "gpa": "5.00",
+    "studentNameBn": "নতুন শিক্ষার্থী",
+    "studentNameEn": "NEW STUDENT",
+    "studentMobile": "01777777777",
+    "submittedAt": "2026-09-23T06:00:00Z",
+    "status": "SUBMITTED"
   }
 ]

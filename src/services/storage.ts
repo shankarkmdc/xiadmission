@@ -78,7 +78,7 @@ export function saveApplications(apps: AdmissionApplication[], syncToServer: boo
   }
 }
 
-export async function saveSingleApplicationToServer(app: AdmissionApplication): Promise<void> {
+export async function saveSingleApplicationToServer(app: AdmissionApplication): Promise<boolean> {
   // Update local
   const current = getApplications();
   const filtered = current.filter((a) => a.sscRoll !== app.sscRoll);
@@ -89,33 +89,55 @@ export async function saveSingleApplicationToServer(app: AdmissionApplication): 
 
   // Push to server
   try {
-    await fetch('/api/applications', {
+    const res = await fetch('/api/applications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ application: app }),
     });
+    if (res.ok) {
+      return true;
+    }
   } catch (err) {
     console.warn('Could not post single application to server:', err);
   }
+  return false;
 }
 
 export async function fetchServerApplications(): Promise<AdmissionApplication[]> {
   try {
-    const res = await fetch('/api/applications');
+    const res = await fetch(`/api/applications?_t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+      },
+    });
     if (res.ok) {
       const json = await res.json();
       const serverApps: AdmissionApplication[] = json.applications || [];
       const localApps = getApplications();
 
-      // Merge local and server apps by SSC Roll
+      // Start with server applications
       const appMap = new Map<string, AdmissionApplication>();
-      localApps.forEach((a) => appMap.set(a.sscRoll.trim(), a));
       serverApps.forEach((a) => {
-        const roll = a.sscRoll.trim();
-        const existing = appMap.get(roll);
-        // If server has newer or existing doesn't exist
-        if (!existing || (a.updatedAt && (!existing.updatedAt || a.updatedAt > existing.updatedAt))) {
-          appMap.set(roll, { ...existing, ...a });
+        if (a && a.sscRoll) {
+          appMap.set(a.sscRoll.trim(), a);
+        }
+      });
+
+      // Also merge any local-only applications that might not have been uploaded yet
+      localApps.forEach((a) => {
+        if (a && a.sscRoll) {
+          const roll = a.sscRoll.trim();
+          if (!appMap.has(roll)) {
+            appMap.set(roll, a);
+          } else {
+            // If local has more recent edit or status update
+            const serverItem = appMap.get(roll)!;
+            if (a.updatedAt && serverItem.updatedAt && a.updatedAt > serverItem.updatedAt) {
+              appMap.set(roll, { ...serverItem, ...a });
+            }
+          }
         }
       });
 

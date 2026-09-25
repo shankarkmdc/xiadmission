@@ -7,6 +7,7 @@ import {
   fetchServerSheetsConfig,
   sendApplicationToGoogleSheets,
   testGoogleSheetsWebhook,
+  syncApplicationsFromGoogleSheets,
   GOOGLE_APPS_SCRIPT_CODE,
 } from '../services/googleSheetsService';
 import {
@@ -66,6 +67,9 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
   const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
   const [syncAllMessage, setSyncAllMessage] = useState<string | null>(null);
+
+  const [isPullingFromSheets, setIsPullingFromSheets] = useState<boolean>(false);
+  const [pullMessage, setPullMessage] = useState<string | null>(null);
 
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [showCodeDetails, setShowCodeDetails] = useState<boolean>(false);
@@ -154,6 +158,42 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
     setIsSyncingAll(false);
     onApplicationsUpdated(updated);
     setSyncAllMessage(`সফল! মোট ${successCount} টি আবেদন গুগল শিটে সফলভাবে সিঙ্ক হয়েছে।`);
+  };
+
+  // Pull all applications directly from Google Sheets into Admin Portal
+  const handlePullFromSheets = async () => {
+    setIsPullingFromSheets(true);
+    setPullMessage(null);
+
+    try {
+      const res = await syncApplicationsFromGoogleSheets();
+      if (res.success && res.applications.length > 0) {
+        // Merge with existing
+        const appMap = new Map<string, AdmissionApplication>();
+        applications.forEach((a) => {
+          if (a.sscRoll) appMap.set(String(a.sscRoll).trim(), a);
+        });
+
+        res.applications.forEach((a) => {
+          if (a.sscRoll) {
+            const roll = String(a.sscRoll).trim();
+            const existing = appMap.get(roll);
+            appMap.set(roll, { ...(existing || {}), ...a, syncedToGoogleSheets: true });
+          }
+        });
+
+        const merged = Array.from(appMap.values());
+        onApplicationsUpdated(merged);
+        setPullMessage(`অভিনন্দন! গুগল শিট থেকে ${res.applications.length} টি আবেদন সফলভাবে লোড হয়েছে। মোট আবেদন: ${merged.length} টি।`);
+      } else {
+        setPullMessage(res.message || 'গুগল শিট থেকে আবেদন পাওয়া যায়নি। আপনার Webhook বা শিটের লিংক সঠিক কিনা পরীক্ষা করুন।');
+      }
+    } catch (err: any) {
+      setPullMessage(`গুগল শিট থেকে লোড করতে সমস্যা: ${err?.message || 'সার্ভার রেসপন্স দেয়নি'}`);
+    } finally {
+      setIsPullingFromSheets(false);
+      setTimeout(() => setPullMessage(null), 7000);
+    }
   };
 
   // Copy Google Apps Script Code
@@ -410,19 +450,39 @@ export const GoogleSheetsSyncPanel: React.FC<GoogleSheetsSyncPanelProps> = ({
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleSyncAll}
-              disabled={isSyncingAll || !isConfigured || applications.length === 0}
-              className="w-full sm:w-auto px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition flex items-center justify-center gap-2"
-            >
-              {isSyncingAll ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <FileSpreadsheet className="w-4 h-4" />
-              )}
-              <span>{isSyncingAll ? 'গুগল শিটে ডেটা পাঠানো হচ্ছে...' : `সব ${applications.length} টি আবেদন গুগল শিটে সিঙ্ক করুন`}</span>
-            </button>
+            {pullMessage && (
+              <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-xl text-xs font-medium flex items-center gap-2">
+                <Info className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>{pullMessage}</span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handlePullFromSheets}
+                disabled={isPullingFromSheets || !isConfigured}
+                className="w-full sm:w-auto px-5 py-2.5 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition flex items-center justify-center gap-2"
+                title="গুগল শিট থেকে সরাসরি সমস্ত আবেদন টেনে আনুন (কোনো ফাইল আপলোড বা পেস্ট করা লাগবে না)"
+              >
+                <RefreshCw className={`w-4 h-4 ${isPullingFromSheets ? 'animate-spin' : ''}`} />
+                <span>{isPullingFromSheets ? 'শিট থেকে ডেটা আনা হচ্ছে...' : 'গুগল শিট থেকে সরাসরি আবেদন লোড করুন (Pull)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSyncAll}
+                disabled={isSyncingAll || !isConfigured || applications.length === 0}
+                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition flex items-center justify-center gap-2"
+              >
+                {isSyncingAll ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="w-4 h-4" />
+                )}
+                <span>{isSyncingAll ? 'গুগল শিটে পাঠানো হচ্ছে...' : `সব ${applications.length} টি আবেদন শিটে সিঙ্ক করুন (Push)`}</span>
+              </button>
+            </div>
           </div>
         </div>
 
